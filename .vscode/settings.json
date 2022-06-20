@@ -1,0 +1,10 @@
+{
+    "filewatcher.commands": [
+        {
+            "match": "\\.*(ipynb|py)",
+            "isAsync": true,
+            "cmd": "jupytext --set-formats ipynb,py:percent --sync ${file}",
+            "event": "onFileChange"
+        }		
+    ]
+}
