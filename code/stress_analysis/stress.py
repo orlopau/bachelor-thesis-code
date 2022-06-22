@@ -15,9 +15,10 @@
 # ---
 
 # %%
+import horovod.torch as hvd
 import numpy as np
-import torch.nn as nn                     # neural networks
-import torch.nn.functional as F           # layers, activations and more
+import torch.nn as nn
+import torch.nn.functional as F
 import torch
 from sklearn.model_selection import train_test_split
 import math
@@ -83,8 +84,6 @@ def conv_out_dim(dim_in, convolutions):
 conv_out_dim(32, [(5,1), (3,3)])
 
 # %%
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 dim_in = dataset_train.tensors[0][1].size()
 dim_out = dataset_train.tensors[1][1].size()
 print(f"in: {dim_in}, out: {dim_out}")
@@ -102,8 +101,9 @@ for ch_in, ch_out in zip(conv_layer_channels, conv_layer_channels[1:]):
 def tuple_reducer(t):
     return t[0] if type(t) is tuple else t
 
-conv_dims = conv_out_dim(dim_in[1], [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride)) 
-    for layer in filter(lambda l: type(l) is not nn.ReLU, conv_layers)])
+
+conv_dims = conv_out_dim(dim_in[1], [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride))
+                                     for layer in filter(lambda l: type(l) is not nn.ReLU, conv_layers)])
 flatten_dim = conv_layer_channels[-1] * conv_dims[-1]
 
 
@@ -115,15 +115,27 @@ for n_in, n_out in zip(dense_layer_neurons, dense_layer_neurons[1:]):
 
 dense_layers.append(nn.Linear(dense_layer_neurons[-1], dim_out[0]))
 
-model = nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers).to(device)
-torchinfo.summary(model, input_size=(BATCH_SIZE, *dim_in))
+model = nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers)
+print(torchinfo.summary(model, input_size=(BATCH_SIZE, *dim_in)))
+
 
 # %%
+hvd.init()
+device = torch.device("cuda", hvd.local_rank())
+model.to(device)
+
+sampler_distributed_train = torch.utils.data.distributed.DistributedSampler(dataset_train, num_replicas=hvd.size(), rank=hvd.rank(), shuffle=True)
+loader_distributed_train = torch.utils.data.DataLoader(dataset_train, batch_size=BATCH_SIZE, sampler=sampler_distributed_train)
+
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+optimizer = hvd.DistributedOptimizer(torch.optim.Adam(model.parameters(), lr=LEARNING_RATE), named_parameters=model.named_parameters())
+
+hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
 PRINT_EACH = 500
 print(f"printing loss each {PRINT_EACH} batches")
+print(f"horovod: local rank {hvd.local_rank()}")
 
 for epoch in range(2):  # loop over the dataset multiple times
 
