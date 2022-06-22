@@ -24,20 +24,48 @@ from sklearn.model_selection import train_test_split
 import math
 import torchinfo
 import matplotlib.pyplot as plt
+import argparse
+
+# %%
+import platform
+print(f"starting a run on node with hostname {platform.node()}")
+
+
+# %%
+def isnotebook():
+    try:
+        shell = get_ipython().__class__.__name__
+        return shell == 'ZMQInteractiveShell'
+    except NameError:
+        return False
+
 
 # %%
 BATCH_SIZE = 100
 LEARNING_RATE = 0.001
-DEEP_LAYERS = [5]
+DEEP_LAYERS = [200, 50, 5]
 # output channels of conv layers
-CONV_LAYERS = [20, 20]
+CONV_LAYERS = [100, 40]
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--data", help="path to data dir", default="../data/")
+
+if (isnotebook()):
+    args = parser.parse_args(args=[])
+else:
+    args = parser.parse_args()
+
+args
 
 # %%
-raw_y = np.load("../data/parameter.train")
-raw_x = np.load("../data/prepared_data.train")
+print(f"importing data from {args.data}")
 
-# %%
+raw_y = np.load(args.data + "parameter.train")
+raw_x = np.load(args.data + "prepared_data.train")
+
 X_train, X_test, y_train, y_test = train_test_split(raw_x, raw_y, test_size=0.25, random_state=42)
+del raw_x
+del raw_y
 
 
 # %%
@@ -116,11 +144,19 @@ for n_in, n_out in zip(dense_layer_neurons, dense_layer_neurons[1:]):
 dense_layers.append(nn.Linear(dense_layer_neurons[-1], dim_out[0]))
 
 model = nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers)
-print(torchinfo.summary(model, input_size=(BATCH_SIZE, *dim_in)))
 
 
 # %%
 hvd.init()
+
+if (hvd.rank() == 0):
+    print(torchinfo.summary(model, input_size=(BATCH_SIZE, *dim_in)))
+
+local_rank = hvd.local_rank()
+
+print(f"Local rank {hvd.local_rank()}, world size: {hvd.size()}, world rank: {hvd.rank()}")
+
+
 device = torch.device("cuda", hvd.local_rank())
 model.to(device)
 
@@ -128,19 +164,25 @@ sampler_distributed_train = torch.utils.data.distributed.DistributedSampler(data
 loader_distributed_train = torch.utils.data.DataLoader(dataset_train, batch_size=BATCH_SIZE, sampler=sampler_distributed_train)
 
 criterion = nn.MSELoss()
-optimizer = hvd.DistributedOptimizer(torch.optim.Adam(model.parameters(), lr=LEARNING_RATE), named_parameters=model.named_parameters())
+
+lr = LEARNING_RATE * hvd.size()
+print(f"actual learning rate is {lr}")
+
+optimizer = hvd.DistributedOptimizer(torch.optim.Adam(model.parameters(), lr=LEARNING_RATE * hvd.size()), named_parameters=model.named_parameters())
 
 hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
 PRINT_EACH = 500
 print(f"printing loss each {PRINT_EACH} batches")
-print(f"horovod: local rank {hvd.local_rank()}")
 
-for epoch in range(2):  # loop over the dataset multiple times
+import time
+start = time.time()
+
+for epoch in range(8):  # loop over the dataset multiple times
 
     running_loss = 0.0
-    for i, (X, y) in enumerate(loader_train):
+    for i, (X, y) in enumerate(loader_distributed_train):
         optimizer.zero_grad()
 
         outputs = model(X.to(device))
@@ -151,8 +193,10 @@ for epoch in range(2):  # loop over the dataset multiple times
         # print statistics
         running_loss += loss.item()
         if (i + 1) % PRINT_EACH == 0:
-            print(f'[Epoch:{epoch + 1}, {(i + 1) * BATCH_SIZE:5d}] loss: {running_loss / PRINT_EACH:.6f}', end="\r", flush=True)
+            print(f'[Epoch:{epoch + 1}, {(i + 1) * BATCH_SIZE:5d}] loss: {running_loss / PRINT_EACH:.6f}')
             running_loss = 0.0
+
+print(f"training took {(time.time() - start):.2f}s")
 
 
 # %%
@@ -161,10 +205,10 @@ def test_network():
 
     with torch.no_grad():
         loss = 0
-        for (X, y) in loader_train:
+        for (X, y) in loader_test:
             out = model(X.to(device))
             loss += float(criterion(out, y.to(device)))
         
-        return loss / len(loader_train)
+        return loss / len(loader_test)
 
 print(f"validated loss: {test_network()}")
