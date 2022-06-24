@@ -10,7 +10,8 @@ import ray
 
 num_cpus = 2
 
-ray.init(address=sys.argv[1])
+# ray.init(address=sys.argv[1])
+ray.init(address="auto")
 
 print("Nodes in the Ray cluster:")
 print(ray.nodes())

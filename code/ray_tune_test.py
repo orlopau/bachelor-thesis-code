@@ -105,14 +105,11 @@ search_space = {
 
 print("starting ray tune test")
 
-# Uncomment this to enable distributed execution
-ray.init(address=os.environ["RAY_ADDRESS"])
+ray.init(address="auto")
 
 # Download the dataset first
-datasets.MNIST("./data", train=True, download=True)
-
+datasets.MNIST("/lustre/ssd/ws/s8979104-horovod/data", train=True, download=True)
 analysis = tune.run(train_mnist, config=search_space, num_samples=50)
 
 #%%
-
 print(analysis.results)
