@@ -74,18 +74,18 @@ def create_datasets():
     transforms = torchvision.transforms.Compose([
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Normalize((0.5070937, 0.48655552, 0.44092253), 
-            (0.26733243, 0.256427, 0.27613324))
+            (0.26733243, 0.256427, 0.27613324)),
     ])
 
-    ds_train = torchvision.datasets.CIFAR10(args.data, transform=transforms, download=True)
-    ds_test = torchvision.datasets.CIFAR10(args.data, train=False, transform=transforms, download=True)
+    ds_train = torchvision.datasets.CIFAR10(args.data, transform=transforms, download=False)
+    ds_test = torchvision.datasets.CIFAR10(args.data, train=False, transform=transforms, download=False)
     return (ds_train, ds_test)
 
 def create_loaders(ds_train, ds_test, batch_size=100):
     """Creates the loaders from the given datasets."""
     return (
-        torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=8),
-        torch.utils.data.DataLoader(ds_test, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=8)
+        torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=2),
+        torch.utils.data.DataLoader(ds_test, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=2)
     )
 
 def create_network(
@@ -99,10 +99,12 @@ def create_network(
     # add input channels to cnn layers
     conv_layer_channels = [dim_in[0]] + cnn_channels
     conv_layers = []
-    for ch_in, ch_out in zip(conv_layer_channels, conv_layer_channels[1:]):
+    for i, (ch_in, ch_out) in enumerate(zip(conv_layer_channels, conv_layer_channels[1:])):
         conv_layers.append(cnn_convolution(ch_in, ch_out, kernel_size=3, padding=1))
         conv_layers.append(cnn_activation())
-        conv_layers.append(nn.MaxPool2d(kernel_size=2, padding=1))
+        if i != len(conv_layer_channels) - 2:
+            conv_layers.append(nn.MaxPool2d(kernel_size=2, padding=1))
+
     
     # calc conv output size
     def tuple_reducer(t):
@@ -113,8 +115,7 @@ def create_network(
                                         for layer in filter(lambda l: type(l) is not cnn_activation, conv_layers)], 1)
     flatten_dim = conv_layer_channels[-1] * conv_dims[-1]**2
 
-    print(conv_dims)
-
+    print(flatten_dim)
 
     dense_layer_neurons = [flatten_dim] + hidden_neurons
     dense_layers = []
@@ -125,78 +126,98 @@ def create_network(
     dense_layers.append(nn.Linear(dense_layer_neurons[-1], dim_out[0]))
     if out_activation is not None:
         dense_layers.append(out_activation)
+    
+    net = nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers)
 
-    return nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers)
+    if isnotebook():
+        print(net)
+        
+    return net
+
+def batch_accuracy(Y, y):
+    """Calculates the accuracy of the batch prediciton."""
+    truth_map = y.argmax(axis=1).eq(Y)
+    return int(truth_map.sum()) / len(truth_map)
 
 def test_network(net, loader_test, device):
-    torch.cuda.empty_cache()
     with torch.no_grad():
         net.eval()
-        correct = 0
-        sum_samples = 0
-        for (X, y) in loader_test:
-            out = net(X.to(device))
-            truth = out.argmax(axis=1).eq(y.to(device))
-            correct += int(truth.sum())
-            sum_samples += len(truth)
+        accuracy = 0
+        for (X, Y) in loader_test:
+            y = net(X.to(device))
+            accuracy += batch_accuracy(Y.to(device), y)
         net.train()
-        return correct / sum_samples
+        return accuracy / len(loader_test)
         
 def train(model, optimizer, criterion, loader_train, loader_test, device, epochs=20):
-    for epoch in range(epochs):  # loop over the dataset multiple times
-        for i, (X, y) in enumerate(loader_train):
+    for epoch in range(epochs):
+        accuracy = 0
+        for i, (X, Y) in enumerate(loader_train):
             optimizer.zero_grad()
 
-            outputs = model(X.to(device))
-            loss = criterion(outputs, y.to(device))
+            y = model(X.to(device))
+            accuracy += batch_accuracy(Y.to(device), y)
+
+            loss = criterion(y, Y.to(device))
             loss.backward()
+
+            # clip gradients, arbitrary 1
+            # nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
         
-        acc = test_network(model, loader_test, device)
-        tune.report(mean_accuracy=acc)
-        print(f"[Epoch {epoch}: accuracy={acc}]")
+        tune.report(mean_accuracy=test_network(model, loader_test, device), train_acc=accuracy / len(loader_train))
 
 
 # %%
 def train_experiment(config):
     ds_train, ds_test = create_datasets()
-    dl_train, dl_test = create_loaders(ds_train, ds_test, batch_size=200)
-    net = create_network(ds_train[0][0].shape, [len(ds_train.classes)], nn.Softmax(dim=1),
-                         cnn_channels=[config["c0"], config["c1"]], hidden_neurons=[config["l0"]])
+    dl_train, dl_test = create_loaders(ds_train, ds_test, batch_size=config["batch_size"])
 
-    device = torch.device("cuda:0")
-    print(device)
+    #hidden_neurons = [config["l0"] for i in range(config["depth"])]
+    net = create_network(ds_train[0][0].shape, [len(ds_train.classes)], nn.Softmax(dim=1),
+                         cnn_channels=config["c"], hidden_neurons=config["d"])
+
+    device = torch.device("cuda")
     net.to(device)
 
     train(net, torch.optim.Adam(net.parameters(), lr=config["lr"]),
-          nn.CrossEntropyLoss(), dl_train, dl_test, device)
+          nn.CrossEntropyLoss(), dl_train, dl_test, device, epochs=50)
 
+
+if not isnotebook():
+    ray.init(address="auto")
 
 config = {
-    "lr": tune.loguniform(1e-4, 1e-2),
-    "l0": tune.qrandint(128, 512, 64),
-    "c0": tune.qrandint(200, 600, 80),
-    "c1": tune.qrandint(200, 600, 80)
+    "lr": 0.0008,
+    "batch_size": 200,
+    "d": [64],
+    "c": [32, 64, 64],
+    # "depth": tune.grid_search([1, 2]),
+    # "log_sys_usage": True
 }
 
-reporter = tune.JupyterNotebookReporter(overwrite=True)
 scheduler = ASHAScheduler(
-    max_t=10,
-    grace_period=1,
+    max_t=30,
+    grace_period=10,
     reduction_factor=2
 )
 
-ray.init(address="auto")
+reporter = None
+if isnotebook():
+    reporter = tune.JupyterNotebookReporter(overwrite=True)
+
 analysis = tune.run(
-    tune.with_parameters(train_experiment), 
-    config=config, 
-    progress_reporter=reporter,
-    resources_per_trial={"cpu": 2, "gpu": 1}, 
+    train_experiment, 
+    config=config,
+    resources_per_trial={"cpu": 2, "gpu": 1},
     local_dir=args.data + "/ray",
     scheduler=scheduler,
     mode="max",
     metric="mean_accuracy",
-    num_samples=40
+    num_samples=1,
+    fail_fast=True,
+    progress_reporter=reporter,
+    verbose=3
 )
 
 best_experiment = analysis.get_best_trial()

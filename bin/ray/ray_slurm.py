@@ -75,7 +75,7 @@ print(f"head node: {hostnames[0]}, ip: {head_ip}")
 
 slurm_cpus_per_task = int(os.environ['SLURM_CPUS_PER_TASK'])
 # TODO get gpus from gres, gpus per task doesnt work on taurus
-slurm_gpus_per_task = int(os.environ.get('SLURM_GPUS_PER_TASK', 0))
+slurm_gpus_per_task = int(os.environ.get('SLURM_GPUS_PER_TASK', 4))
 # only allocations where each node has the same number of tasks are allowed, i.e. SLURM_TASKS_PER_NODE must have a form like "2(x5)"
 slurm_tasks_per_node = int(os.environ.get(
     'SLURM_TASKS_PER_NODE').split('(')[0])
