@@ -105,4 +105,4 @@ class GenericCNN:
             # nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()
 
-        return accuracy / len(self.loader_train)
+        return float(accuracy / len(self.loader_train))

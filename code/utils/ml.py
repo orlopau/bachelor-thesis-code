@@ -23,5 +23,5 @@ def create_loaders(ds_train, ds_test, batch_size=100, workers=2):
     """Creates the loaders from the given datasets."""
     return (
         torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=workers),
-        torch.utils.data.DataLoader(ds_test, batch_size=batch_size, shuffle=False, drop_last=True, num_workers=workers)
+        torch.utils.data.DataLoader(ds_test, batch_size=batch_size, shuffle=False, drop_last=True, pin_memory=True, num_workers=workers)
 )
