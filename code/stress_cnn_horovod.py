@@ -148,7 +148,7 @@ if hvd.local_rank() == 0:
     took = time.time() - start
 
     log_dir = Path(
-        args.data) / args.log_dir / (time.strftime("%Y-%m-%d_%H-%M") + uuid.uuid4().hex[:8])
+        args.data) / args.log_dir / (time.strftime("%Y-%m-%d_%H-%M") + "_" + uuid.uuid4().hex[:8])
     log_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.DataFrame(points)
