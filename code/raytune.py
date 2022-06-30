@@ -41,7 +41,7 @@ def trainable(config):
                                          (0.26733243, 0.256427, 0.27613324)),
 
     ])
-    
+
     ds_train = torchvision.datasets.CIFAR10(
         args.data, transform=transforms, download=False)
     ds_test = torchvision.datasets.CIFAR10(
@@ -108,7 +108,6 @@ scheduler = ASHAScheduler(
     max_t=max_epochs,
     grace_period=10,
     reduction_factor=2,
-    brackets=4
 )
 
 reporter = tune.CLIReporter(

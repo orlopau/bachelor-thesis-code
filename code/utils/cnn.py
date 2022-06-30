@@ -1,30 +1,33 @@
 import dataclasses
+import string
+from typing import Callable
+from grpc import Call
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-from torchinfo import summary
-import utils.generic as utils_generic
 import utils.ml as utils_ml
-import torch
+from torchinfo import summary
 
 
-def batch_accuracy(Y, y):
-    """Calculates the accuracy of the batch prediciton, given one hot outputs."""
+def batch_accuracy_onehot(y, Y):
+    """Calculates the accuracy of the batch prediciton, given one hot outputs for classification."""
     truth_map = y.argmax(axis=1).eq(Y)
     return int(truth_map.sum()) / len(truth_map)
-
 
 @dataclasses.dataclass
 class CNNConfig:
     dim_in: tuple
     dim_out: tuple
-    cnn_channels: tuple
-    cnn_convolution: nn.Module
-    linear_layers: tuple
+    cnn_channels: list
+    cnn_convolution_gen: Callable[[tuple], nn.Module]
+    cnn_pool_gen: Callable[[], nn.Module]
+    linear_layers: list
     loss_function: torch.nn.Module
     cnn_activation: torch.nn.Module = nn.ReLU
     linear_activation: torch.nn.Module = nn.ReLU
-    out_activation: torch.nn.Module = nn.Softmax(dim=1)
+    out_activation: torch.nn.Module = nn.Softmax(dim=1),
+    # function calculating the accuracy given the target and prediction of a whole batch, having the dimension [batch_size, ...]
+    batch_accuracy_func: Callable[[torch.Tensor, torch.Tensor], float] = batch_accuracy_onehot
 
 
 class GenericCNN:
@@ -45,19 +48,22 @@ class GenericCNN:
         conv_layer_channels = [net_config.dim_in[0]] + net_config.cnn_channels
         conv_layers = []
         for i, (ch_in, ch_out) in enumerate(zip(conv_layer_channels, conv_layer_channels[1:])):
-            conv_layers.append(net_config.cnn_convolution(
-                ch_in, ch_out, kernel_size=3, padding=1))
+            conv_layers.append(net_config.cnn_convolution_gen((ch_in, ch_out)))
             conv_layers.append(net_config.cnn_activation())
-            if i != len(conv_layer_channels) - 2:
-                conv_layers.append(nn.MaxPool2d(kernel_size=2, padding=1))
+            conv_layers.append(net_config.cnn_pool_gen())
 
         # calc conv output size
         def tuple_reducer(t):
             return t[0] if type(t) is tuple else t
 
-        conv_dims = utils_ml.conv_out_dim(net_config.dim_in[1], [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride))
-                                                                               for layer in filter(lambda l: type(l) is not net_config.cnn_activation, conv_layers)], 1)
-        flatten_dim = conv_layer_channels[-1] * conv_dims[-1]**2
+        conv_dims = utils_ml.conv_out_dim(net_config.dim_in[1], [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride), tuple_reducer(layer.padding))
+                                                                               for layer in filter(lambda l: type(l) is not net_config.cnn_activation, conv_layers)])
+        
+        conv_out_dim = conv_dims[-1]
+        if net_config.cnn_convolution_gen((1,1)) == nn.Conv2d:
+            conv_out_dim = conv_out_dim**2
+
+        flatten_dim = conv_layer_channels[-1] * conv_out_dim
 
         dense_layer_neurons = [flatten_dim] + net_config.linear_layers
         dense_layers = []
@@ -83,20 +89,20 @@ class GenericCNN:
             accuracy = 0
             for (X, Y) in self.loader_test:
                 y = self.net(X.to(self.device))
-                accuracy += batch_accuracy(Y.to(self.device), y)
+                accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
             self.net.train()
-            return accuracy / len(self.loader_test)
+            return float(accuracy / len(self.loader_test))
 
     def train(self, optimizer) -> float:
         """
-        Trains the network on the train loader for one iteration through it, returning the train accuracy.
+        Trains the network on the train loader for one iteration, returning the train accuracy.
         """
         accuracy = 0
         for i, (X, Y) in enumerate(self.loader_train):
             optimizer.zero_grad()
 
             y = self.net(X.to(self.device))
-            accuracy += batch_accuracy(Y.to(self.device), y)
+            accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
 
             loss = self.net_config.loss_function(y, Y.to(self.device))
             loss.backward()
@@ -106,3 +112,6 @@ class GenericCNN:
             optimizer.step()
 
         return float(accuracy / len(self.loader_train))
+
+    def summary(self, batch_size) -> string:
+        summary(self.net, (batch_size, *self.net_config.dim_in))

@@ -5,6 +5,6 @@ VENV=$WS_PATH/venv_torch
 
 echo "Starting a mpi run via horovod..."
 
-mpirun -np 8 \
+mpirun -np 1 \
     -bind-to none -map-by slot \
     $VENV/bin/python $WS_PATH/sync/code/stress_analysis/stress.py --data "$WS_PATH/sync/code/data/"

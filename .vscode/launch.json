@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": true,
         },
         {
             "name": "Alpha",
@@ -22,10 +22,10 @@
             "args": [
                 "2",
                 "0.001",
-                "100",
+                "200",
                 "20",
                 "20",
-                "5"
+                "64"
             ]
         }
     ]
