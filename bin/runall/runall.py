@@ -1,7 +1,7 @@
 import subprocess
 import pathlib
 
-config = {"nodes": [1 for _ in range(9)], "gpus": [i + 1 for i in range(9)]}
+config = {"nodes": [1 for _ in range(8)], "gpus": [i + 1 for i in range(8)]}
 
 print(f"config:\n{config}")
 

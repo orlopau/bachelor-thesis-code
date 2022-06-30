@@ -64,7 +64,6 @@ hvd.init()
 torch.manual_seed(hvd.rank())
 device = torch.device(f"cuda:{hvd.local_rank()}" if torch.cuda.is_available() else "cpu")
 
-
 print(f"running hvd on rank {hvd.local_rank()}")
 
 (dataset_train, dataset_test) = create_datasets()
@@ -130,6 +129,7 @@ for epoch in range(config["epochs"]):
         })
         print(f"Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc}, Took={time_epoch}")
 
+
 def horovod_meta():
     return {
         "size": hvd.size(),
@@ -138,27 +138,31 @@ def horovod_meta():
         "nccl_built": hvd.nccl_built()
     }
 
+
 if hvd.local_rank() == 0:
     import pandas as pd
     from pathlib import Path
     import json
+    import uuid
 
     took = time.time() - start
 
-    log_dir = Path(args.data) / args.log_dir / time.strftime("%Y-%m-%d_%H-%M")
+    log_dir = Path(
+        args.data) / args.log_dir / (time.strftime("%Y-%m-%d_%H-%M") + uuid.uuid4().hex[:8])
     log_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.DataFrame(points)
     df.to_csv((log_dir / "data.csv").resolve(), index=False)
 
     with open((log_dir / "meta.json").resolve(), 'w') as outfile:
-        json.dump({
-            "run": {
-                "duration": took,
-                "time_epoch": time.time(),
-                "train_size": len(dataset_train),
-                "test_size": len(dataset_test),
-                "horovod": horovod_meta()
-            },
-            "config": config
-        }, outfile)
+        json.dump(
+            {
+                "run": {
+                    "duration": took,
+                    "time_epoch": time.time(),
+                    "train_size": len(dataset_train),
+                    "test_size": len(dataset_test),
+                    "horovod": horovod_meta()
+                },
+                "config": config
+            }, outfile)
