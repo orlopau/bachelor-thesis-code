@@ -8,6 +8,7 @@ import platform
 import utils.cnn as cnn
 import time
 import horovod.torch as hvd
+import os
 
 print(f"starting a run on node with hostname {platform.node()}")
 
@@ -139,6 +140,10 @@ def horovod_meta():
     }
 
 
+def slurm_meta():
+    return [x for x in os.environ.items() if x[0].startswith("SLURM")]
+
+
 if hvd.local_rank() == 0:
     import pandas as pd
     from pathlib import Path
@@ -162,7 +167,8 @@ if hvd.local_rank() == 0:
                     "time_epoch": time.time(),
                     "train_size": len(dataset_train),
                     "test_size": len(dataset_test),
-                    "horovod": horovod_meta()
+                    "config": config,
                 },
-                "config": config
+                "horovod": horovod_meta(),
+                "slurm": slurm_meta()
             }, outfile)

@@ -1,0 +1,16 @@
+vergleich zwischen partitionen
+
+skalierung gpus und knoten
+
+./run_alpha.sh 2 0.001 100 20 20 50
+./run_alpha.sh 50 0.0001 100 30 30 200
+
+bottleneck ist oft nachladen von daten -> besser synthetischer benchmark ohne daten für vergleichbarkeit?
+
+raytune + horovod / raytune ohne horovod / (horovod only)
+
+raytune kann auch von allein auf mehre nodes und gpus skalieren aber nur eine gpu per training
+
+ab wann lohnt sich skalierung des trainings auf mehrere gpus vs mehr tuning runs parallel auf einer gpu
+
+speedup gpus pro knoten / node
