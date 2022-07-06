@@ -1,5 +1,6 @@
 import dataclasses
 import string
+import time
 from typing import Callable
 from grpc import Call
 import torch.nn as nn
@@ -80,20 +81,26 @@ class GenericCNN:
 
         return net
 
-    def test(self) -> float:
+    def test(self, loader=None) -> float:
         """
         Tests the network on the test loader returning the accuracy.
         """
+        if loader == None: loader = self.loader_test
+
+        samples = 0
         with torch.no_grad():
             self.net.eval()
             accuracy = 0
-            for (X, Y) in self.loader_test:
+            iters = 0
+            for (X, Y) in loader:
+                iters += 1
+                samples += X.shape[0]
                 y = self.net(X.to(self.device))
                 accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
             self.net.train()
-            return float(accuracy / len(self.loader_test))
+            return float(accuracy / len(loader))
 
-    def train(self, optimizer) -> float:
+    def train(self, optimizer):
         """
         Trains the network on the train loader for one iteration, returning the train accuracy.
         """
@@ -109,9 +116,11 @@ class GenericCNN:
 
             # clip gradients, arbitrary 1
             # nn.utils.clip_grad_norm_(model.parameters(), 1)
+            step_pre_time = time.time()
             optimizer.step()
+            step_time = time.time() - step_pre_time
 
-        return float(accuracy / len(self.loader_train))
+        return (float(accuracy / len(self.loader_train)), step_time)
 
     def summary(self, batch_size) -> string:
         summary(self.net, (batch_size, *self.net_config.dim_in))

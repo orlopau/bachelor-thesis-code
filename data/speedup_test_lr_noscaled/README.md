@@ -3,6 +3,8 @@
 All tests are run with "--exclusive" option to allocate the whole node.
 Tests are run without NCCL support!
 
+The batch size and learning rates are the same across all GPU configurations.
+
 ```sh
 #!/bin/bash
 

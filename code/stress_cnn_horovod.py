@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,6 +21,13 @@ parser.add_argument("--small",
                     help="specifiy if a small dataset should be used",
                     action="store_true")
 parser.add_argument("--log-dir", help="sub dir under --data for logging results", default="logs")
+parser.add_argument("--no-test",
+                    help="specify if no test acc should be calculated after each epoch",
+                    action="store_true")
+parser.add_argument(
+    "--single-gpu",
+    help="specify if only a single gpu but multiple horovod processes should be used",
+    action="store_true")
 args = parser.parse_args()
 
 
@@ -35,7 +43,8 @@ def create_datasets():
     X_train, X_test, y_train, y_test = train_test_split(raw_x,
                                                         raw_y,
                                                         test_size=0.25,
-                                                        random_state=42)
+                                                        random_state=42,
+                                                        shuffle=True)
 
     def normalize(data, max, min):
         max = data.max(axis=0)
@@ -62,16 +71,20 @@ def create_datasets():
 
 # create datasets, loaders and start training
 hvd.init()
+np.random.seed(hvd.rank())
 torch.manual_seed(hvd.rank())
-device = torch.device(f"cuda:{hvd.local_rank()}" if torch.cuda.is_available() else "cpu")
+random.seed(hvd.rank())
 
-print(f"running hvd on rank {hvd.local_rank()}")
+device_string = "cuda:0" if args.single_gpu else f"cuda:{hvd.local_rank()}"
+device = torch.device(device_string if torch.cuda.is_available() else "cpu")
+
+print(f"running hvd on rank {hvd.rank()}, device {device}")
 
 (dataset_train, dataset_test) = create_datasets()
 
 config = {
     "batch_size": 512,
-    "lr": 2e-4,
+    "lr": 2e-4 * hvd.size(),
     "epochs": 100,
     "cnn_channels": [50, 50],
     "linear_layers": [200]
@@ -90,21 +103,30 @@ net_config = cnn.CNNConfig(dim_in=dataset_train.tensors[0][1].size(),
 sampler_train = torch.utils.data.distributed.DistributedSampler(dataset_train,
                                                                 num_replicas=hvd.size(),
                                                                 rank=hvd.rank(),
-                                                                shuffle=True)
+                                                                shuffle=True,
+                                                                drop_last=True)
+
+sampler_test = torch.utils.data.distributed.DistributedSampler(dataset_test,
+                                                               num_replicas=hvd.size(),
+                                                               rank=hvd.rank(),
+                                                               shuffle=False)
+
 loader_train = torch.utils.data.DataLoader(dataset_train,
                                            batch_size=config["batch_size"],
                                            pin_memory=True,
                                            drop_last=True,
                                            num_workers=4,
                                            sampler=sampler_train)
+
 loader_test = torch.utils.data.DataLoader(dataset_test,
                                           batch_size=config["batch_size"],
                                           pin_memory=True,
-                                          drop_last=True,
-                                          num_workers=4)
+                                          drop_last=False,
+                                          num_workers=4,
+                                          sampler=sampler_test)
 
 net = cnn.GenericCNN(net_config, loader_train, loader_test, device)
-if hvd.local_rank() == 0:
+if hvd.rank() == 0:
     print(net.summary(config["batch_size"]))
 
 optimizer = torch.optim.Adam(net.net.parameters(), lr=config["lr"])
@@ -116,19 +138,35 @@ hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 points = []
 start = time.time()
 for epoch in range(config["epochs"]):
-    start_epoch = time.time()
-    train_acc = net.train(optimizer)
-    if hvd.local_rank() == 0:
-        test_acc = net.test()
-        time_epoch = time.time() - start_epoch
-        points.append({
+    sampler_train.set_epoch(epoch)
+
+    time_start = time.time()
+    (train_acc, time_train_step) = net.train(optimizer)
+    time_train = time.time()
+
+    test_acc_dist = net.test()
+    time_test = time.time()
+
+    test_accs = hvd.allgather(torch.Tensor([test_acc_dist]), name="gather_test_acc")
+    test_acc_dist = float(test_accs.mean())
+    time_test_reduce = time.time()
+
+    time_end = time_test_reduce
+    if hvd.rank() == 0:
+        point = {
             "epoch": epoch,
             "acc_train": train_acc,
-            "acc_test": test_acc,
-            "time_epoch": time_epoch,
+            "acc_test": test_acc_dist,
+            "time_epoch": time_end - time_start,
+            "time_train": time_train - time_start,
+            "time_train_step": time_train_step,
+            "time_test": time_test - time_train,
+            "time_test_allreduce": time_test_reduce - time_test,
             "time": time.time() - start
-        })
-        print(f"Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc}, Took={time_epoch}")
+        }
+        points.append(point)
+        print(f"""Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc_dist}, 
+            Took={point['time_epoch']}""")
 
 
 def horovod_meta():
@@ -141,10 +179,10 @@ def horovod_meta():
 
 
 def slurm_meta():
-    return [x for x in os.environ.items() if x[0].startswith("SLURM")]
+    return {x[0]: x[1] for x in os.environ.items() if x[0].startswith("SLURM")}
 
 
-if hvd.local_rank() == 0:
+if hvd.rank() == 0:
     import pandas as pd
     from pathlib import Path
     import json
