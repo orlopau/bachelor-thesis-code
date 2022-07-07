@@ -10,8 +10,7 @@ import utils.cnn as cnn
 import time
 import horovod.torch as hvd
 import os
-
-print(f"starting a run on node with hostname {platform.node()}")
+import wandb
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data",
@@ -29,6 +28,19 @@ parser.add_argument(
     help="specify if only a single gpu but multiple horovod processes should be used",
     action="store_true")
 args = parser.parse_args()
+
+
+def horovod_meta():
+    return {
+        "size": hvd.size(),
+        "mpi_enabled": hvd.mpi_enabled(),
+        "gloo_enabled": hvd.gloo_enabled(),
+        "nccl_built": hvd.nccl_built()
+    }
+
+
+def slurm_meta():
+    return {x[0]: x[1] for x in os.environ.items() if x[0].startswith("SLURM")}
 
 
 def create_datasets():
@@ -75,20 +87,32 @@ np.random.seed(hvd.rank())
 torch.manual_seed(hvd.rank())
 random.seed(hvd.rank())
 
+config = {
+    "batch_size": 512,
+    "lr": 2e-4 * hvd.size(),
+    "epochs": 20,
+    "cnn_channels": [50, 50],
+    "linear_layers": [200]
+}
+
+if hvd.rank() == 0:
+    wandb.init(project="stress_cnn_horovod",
+               config={
+                   "config": config,
+                   "horovod": horovod_meta(),
+                   "slurm": slurm_meta()
+               },
+               group="slurm_bench",
+               name=f"N:{slurm_meta()['SLURM_NNODES']} G:{hvd.size()}")
+
+print(f"starting a run on node with hostname {platform.node()}, rank {hvd.rank()}")
+
 device_string = "cuda:0" if args.single_gpu else f"cuda:{hvd.local_rank()}"
 device = torch.device(device_string if torch.cuda.is_available() else "cpu")
 
 print(f"running hvd on rank {hvd.rank()}, device {device}")
 
 (dataset_train, dataset_test) = create_datasets()
-
-config = {
-    "batch_size": 512,
-    "lr": 2e-4 * hvd.size(),
-    "epochs": 100,
-    "cnn_channels": [50, 50],
-    "linear_layers": [200]
-}
 
 net_config = cnn.CNNConfig(dim_in=dataset_train.tensors[0][1].size(),
                            dim_out=dataset_train.tensors[1][1].size(),
@@ -128,6 +152,7 @@ loader_test = torch.utils.data.DataLoader(dataset_test,
 net = cnn.GenericCNN(net_config, loader_train, loader_test, device)
 if hvd.rank() == 0:
     print(net.summary(config["batch_size"]))
+    wandb.watch(net.net)
 
 optimizer = torch.optim.Adam(net.net.parameters(), lr=config["lr"])
 optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=net.net.named_parameters())
@@ -164,23 +189,10 @@ for epoch in range(config["epochs"]):
             "time_test_allreduce": time_test_reduce - time_test,
             "time": time.time() - start
         }
+        wandb.log(point)
         points.append(point)
         print(f"""Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc_dist}, 
             Took={point['time_epoch']}""")
-
-
-def horovod_meta():
-    return {
-        "size": hvd.size(),
-        "mpi_enabled": hvd.mpi_enabled(),
-        "gloo_enabled": hvd.gloo_enabled(),
-        "nccl_built": hvd.nccl_built()
-    }
-
-
-def slurm_meta():
-    return {x[0]: x[1] for x in os.environ.items() if x[0].startswith("SLURM")}
-
 
 if hvd.rank() == 0:
     import pandas as pd

@@ -28,7 +28,6 @@ def generate_plots(dir):
 
     def keyer(x):
         key = (int(x[0]["slurm"]["SLURM_NNODES"]), x[0]["horovod"]["size"])
-        print(key)
         return key
 
     results = sorted(results, key=keyer)
@@ -46,7 +45,6 @@ def generate_plots(dir):
 
     nnode_configs = np.unique([x["slurm"]["SLURM_NNODES"] for x in metas])
     first_run_time = metas[0]["run"]["duration"]
-    print(nnode_configs)
     for nnode in nnode_configs:
         runs = list(filter(lambda x: x["slurm"]["SLURM_NNODES"] == nnode, metas))
         xs = [x["horovod"]["size"] for x in runs]
@@ -56,14 +54,14 @@ def generate_plots(dir):
         ax1.grid(True)
         ax2.set_ylabel("speedup")
         ax2.plot(xs, np.divide(ys, first_run_time), label=f"Nodes: {nnode}")
-    
+
     ax2.legend()
     save_fig(fig, "speedup")
 
     # plot acc
     fig, ax = plt.subplots(sharex=True)
     fig.set_size_inches(9, 6)
-    fig.suptitle("Train accuracy; 1 Node; same batch size")
+    fig.suptitle("Train accuracy")
     ax.set_ylabel("train accuracy")
     ax.set_xlabel("epoch")
     ax.set_yscale("log")
@@ -85,14 +83,17 @@ def generate_plots(dir):
 
     for result, ax in zip(results, axs):
         ax.set_title(
-            f'#gpus: {result[0]["horovod"]["size"]}, nodes: {result[0]["slurm"]["SLURM_NNODES"]}')
+            f'#gpus: {result[0]["horovod"]["size"]}, #nodes: {result[0]["slurm"]["SLURM_NNODES"]}, lr: {result[0]["run"]["config"]["lr"]:.5f}'
+        )
         ax.set_ylabel("mse")
         ax.set_xlabel("epoch")
         ax.set_yscale("log")
         ax.xaxis.get_major_locator().set_params(integer=True)
         df = result[1]
-        ax.plot(df["epoch"], df["acc_train"], label="acc_train")
-        ax.plot(df["epoch"], df["acc_test"], label="acc_test")
+        cut = 1
+
+        ax.plot(df["epoch"][cut:], df["acc_train"][cut:], label="acc_train")
+        ax.plot(df["epoch"][cut:], df["acc_test"][cut:], label="acc_test")
         ax.legend()
 
     fig.tight_layout()

@@ -1,1 +1,76 @@
-{"run": {"duration": 1025.48269033432, "time_epoch": 1657122302.5107968, "train_size": 750000, "test_size": 250000, "config": {"batch_size": 512, "lr": 0.0012000000000000001, "epochs": 100, "cnn_channels": [50, 50], "linear_layers": [200]}}, "horovod": {"size": 6, "mpi_enabled": true, "gloo_enabled": false, "nccl_built": 0}, "slurm": {"SLURM_NODELIST": "taurusi[8028-8030]", "SLURM_SPANK_cloud": "", "SLURM_JOB_NAME": "runall", "SLURMD_NODENAME": "taurusi8028", "SLURM_TOPOLOGY_ADDR": "taurusi8028", "SLURM_THREADS_PER_CORE": "1", "SLURM_NTASKS_PER_NODE": "2", "SLURM_PRIO_PROCESS": "0", "SLURM_NODE_ALIASES": "(null)", "SLURM_JOB_QOS": "normal-gpu", "SLURM_HINT": "nomultithread", "SLURM_TOPOLOGY_ADDR_PATTERN": "node", "SLURM_JOB_GPUS": "2,3", "SLURM_MEM_PER_CPU": "4096", "SLURM_SPANK_cloud_create": "", "SLURM_NNODES": "3", "SLURM_JOBID": "26957259", "SLURM_SPANK_beegfs_create": "", "SLURM_NTASKS": "6", "SLURM_CPU_FREQ_REQ": "highm1", "SLURM_TASKS_PER_NODE": "4,1(x2)", "SLURM_WORKING_CLUSTER": "taurus:slurm.master.taurus.hrsk.tu-dresden.de:6810:9216:109", "SLURM_CONF": "/etc/slurm/slurm.conf", "SLURM_JOB_ID": "26957259", "SLURM_CPUS_PER_TASK": "4", "SLURM_SPANK_beegfs_meta": "", "SLURM_JOB_USER": "s8979104", "SLURM_LUSTRE": "s8979104;26957259", "SLURM_SPANK_cloud_type": "", "SLURM_JOB_UID": "2114537", "SLURM_SPANK_beegfs_mount": "", "SLURM_NODEID": "0", "SLURM_SUBMIT_DIR": "/lustre/ssd/ws/s8979104-horovod/sync", "SLURM_TASK_PID": "33307", "SLURM_NPROCS": "6", "SLURM_CPUS_ON_NODE": "16", "SLURM_PROCID": "0", "SLURM_JOB_NODELIST": "taurusi[8028-8030]", "SLURM_LOCALID": "0", "SLURM_JOB_GID": "202106", "SLURM_JOB_CPUS_PER_NODE": "16(x3)", "SLURM_CLUSTER_NAME": "taurus", "SLURM_GTIDS": "0", "SLURM_SUBMIT_HOST": "tauruslogin3.taurus.hrsk.tu-dresden.de", "SLURM_JOB_PARTITION": "alpha", "SLURM_SPANK_beegfs_jobid": "", "SLURM_JOB_ACCOUNT": "p_sp_orlob", "SLURM_JOB_NUM_NODES": "3"}}
+{
+    "run": {
+        "duration": 1025.48269033432,
+        "time_epoch": 1657122302.5107968,
+        "train_size": 750000,
+        "test_size": 250000,
+        "config": {
+            "batch_size": 512,
+            "lr": 0.0012000000000000001,
+            "epochs": 100,
+            "cnn_channels": [
+                50,
+                50
+            ],
+            "linear_layers": [
+                200
+            ]
+        }
+    },
+    "horovod": {
+        "size": 6,
+        "mpi_enabled": true,
+        "gloo_enabled": false,
+        "nccl_built": 0
+    },
+    "slurm": {
+        "SLURM_NODELIST": "taurusi[8028-8030]",
+        "SLURM_SPANK_cloud": "",
+        "SLURM_JOB_NAME": "runall",
+        "SLURMD_NODENAME": "taurusi8028",
+        "SLURM_TOPOLOGY_ADDR": "taurusi8028",
+        "SLURM_THREADS_PER_CORE": "1",
+        "SLURM_NTASKS_PER_NODE": "2",
+        "SLURM_PRIO_PROCESS": "0",
+        "SLURM_NODE_ALIASES": "(null)",
+        "SLURM_JOB_QOS": "normal-gpu",
+        "SLURM_HINT": "nomultithread",
+        "SLURM_TOPOLOGY_ADDR_PATTERN": "node",
+        "SLURM_JOB_GPUS": "2,3",
+        "SLURM_MEM_PER_CPU": "4096",
+        "SLURM_SPANK_cloud_create": "",
+        "SLURM_NNODES": "3",
+        "SLURM_JOBID": "26957259",
+        "SLURM_SPANK_beegfs_create": "",
+        "SLURM_NTASKS": "6",
+        "SLURM_CPU_FREQ_REQ": "highm1",
+        "SLURM_TASKS_PER_NODE": "4,1(x2)",
+        "SLURM_WORKING_CLUSTER": "taurus:slurm.master.taurus.hrsk.tu-dresden.de:6810:9216:109",
+        "SLURM_CONF": "/etc/slurm/slurm.conf",
+        "SLURM_JOB_ID": "26957259",
+        "SLURM_CPUS_PER_TASK": "4",
+        "SLURM_SPANK_beegfs_meta": "",
+        "SLURM_JOB_USER": "s8979104",
+        "SLURM_LUSTRE": "s8979104;26957259",
+        "SLURM_SPANK_cloud_type": "",
+        "SLURM_JOB_UID": "2114537",
+        "SLURM_SPANK_beegfs_mount": "",
+        "SLURM_NODEID": "0",
+        "SLURM_SUBMIT_DIR": "/lustre/ssd/ws/s8979104-horovod/sync",
+        "SLURM_TASK_PID": "33307",
+        "SLURM_NPROCS": "6",
+        "SLURM_CPUS_ON_NODE": "16",
+        "SLURM_PROCID": "0",
+        "SLURM_JOB_NODELIST": "taurusi[8028-8030]",
+        "SLURM_LOCALID": "0",
+        "SLURM_JOB_GID": "202106",
+        "SLURM_JOB_CPUS_PER_NODE": "16(x3)",
+        "SLURM_CLUSTER_NAME": "taurus",
+        "SLURM_GTIDS": "0",
+        "SLURM_SUBMIT_HOST": "tauruslogin3.taurus.hrsk.tu-dresden.de",
+        "SLURM_JOB_PARTITION": "alpha",
+        "SLURM_SPANK_beegfs_jobid": "",
+        "SLURM_JOB_ACCOUNT": "p_sp_orlob",
+        "SLURM_JOB_NUM_NODES": "3"
+    }
+}
