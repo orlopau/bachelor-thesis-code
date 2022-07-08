@@ -1,9 +1,10 @@
+import copy
+from pathlib import Path
 import subprocess
-import pathlib
 import time
-import sys
 import argparse
-
+import shutil
+import uuid
 
 def _grid_search(lists):
     if len(lists) == 1:
@@ -41,29 +42,63 @@ def grid_search(parameters: dict):
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpus", help="gpus as list", default="1")
 parser.add_argument("--nodes", help="nodes as list", default="1")
+parser.add_argument("--group", help="group for wandb", required=True)
+parser.add_argument("--name", help="name for wandb")
 parser.add_argument("--nodelist", help="nodelist to use")
-# parser.add_argument("executable", help="executable to run", nargs=1)
 args = parser.parse_args()
 
-# executable = args.executable
-# del args.executable
+grid_args = copy.deepcopy(vars(args))
+grid_args.pop("name")
+grid_args.pop("group")
+grid_args.pop("nodelist")
 
-grid_config = {k: v.split(",") for k, v in vars(args).items()}
+grid_config = {k: v.split(",") for k, v in grid_args.items()}
 configs = grid_search(grid_config)
 
-print(f"config:\n{configs}")
+print(f"config: {configs}")
 
-with open((pathlib.Path(__file__).parent / "sbatch_hvd_stress.sh").resolve(),
-          "r") as template_file:
+# copy script to another file to prevent changes mid run
+ws_path = Path("/lustre/ssd/ws/s8979104-horovod")
+script_path = ws_path / "sync/code/stress_cnn_horovod.py"
+utils_path = ws_path / "sync/code/utils"
 
-    template = template_file.read()
-    for config in configs:
-        actual = template
-        for (k, v) in config.items():
-            actual = actual.replace("{" + k + "}", str(v))
+target_path = ws_path / "data/tmp_scripts" / f"tmp_{uuid.uuid4().hex[:8]}"
+target_path.mkdir(exist_ok=True, parents=True)
 
-        actual = actual.replace("{mpi_np}", str(int(config["gpus"]) * int(config["nodes"])))
+shutil.copy(script_path, target_path)
+shutil.copytree(utils_path, target_path / "utils", dirs_exist_ok=True)
 
-        print(f"running with {config}")
-        subprocess.run(f"sbatch", shell=True, check=True, input=str.encode(actual))
-        time.sleep(2)
+for config in configs:
+    sbatch = f"""\
+#!/bin/bash
+
+# alpha: 48 cores, 8 gpus, ~8GB per core
+
+#SBATCH --nodes={config["nodes"]}
+#SBATCH --ntasks-per-node={config["gpus"]}
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=4G
+#SBATCH --gres="gpu:{config["gpus"]}"
+#SBATCH --time=1:00:00
+#SBATCH --exclusive
+#SBATCH -p alpha
+#SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
+#SBATCH -J runall
+{"" if args.nodelist is None else f"#SBATCH --nodelist {args.nodelist}"}
+
+WS_PATH=/lustre/ssd/ws/s8979104-horovod
+VENV=$WS_PATH/venv_torch
+
+source $VENV/bin/activate
+
+mpirun -N {config["gpus"]} \\
+    -bind-to none --oversubscribe \\
+    -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH \\
+    -mca pml ob1 -mca btl ^openib \\
+    $VENV/bin/python -u {(target_path / "stress_cnn_horovod.py").resolve()} --data $WS_PATH/data --group {args.group} {"" if args.name is None else f"--name {args.name}"}
+    """
+
+    print(f"running with {config}")
+    print(sbatch)
+    subprocess.run(f"sbatch", shell=True, check=True, input=str.encode(sbatch))
+    time.sleep(2)

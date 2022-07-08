@@ -27,6 +27,8 @@ parser.add_argument(
     "--single-gpu",
     help="specify if only a single gpu but multiple horovod processes should be used",
     action="store_true")
+parser.add_argument("--group", help="group", required=True)
+parser.add_argument("--name", help="name")
 args = parser.parse_args()
 
 
@@ -89,10 +91,12 @@ random.seed(hvd.rank())
 
 config = {
     "batch_size": 512,
-    "lr": 2e-4 * hvd.size(),
-    "epochs": 20,
-    "cnn_channels": [50, 50],
-    "linear_layers": [200]
+    "lr": 1e-3,
+    "epochs": 200,
+    "cnn_channels": [64, 128, 128, 64],
+    "pool_each": 2,
+    "linear_layers": [512, 256],
+    "workers": 4
 }
 
 if hvd.rank() == 0:
@@ -102,8 +106,10 @@ if hvd.rank() == 0:
                    "horovod": horovod_meta(),
                    "slurm": slurm_meta()
                },
-               group="slurm_bench",
-               name=f"N:{slurm_meta()['SLURM_NNODES']} G:{hvd.size()}")
+               group=args.group,
+               name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}"
+               if args.name is None else args.name,
+               dir="/tmp")
 
 print(f"starting a run on node with hostname {platform.node()}, rank {hvd.rank()}")
 
@@ -114,15 +120,19 @@ print(f"running hvd on rank {hvd.rank()}, device {device}")
 
 (dataset_train, dataset_test) = create_datasets()
 
-net_config = cnn.CNNConfig(dim_in=dataset_train.tensors[0][1].size(),
-                           dim_out=dataset_train.tensors[1][1].size(),
-                           cnn_channels=config["cnn_channels"],
-                           cnn_convolution_gen=lambda c: nn.Conv1d(c[0], c[1], kernel_size=5),
-                           cnn_pool_gen=lambda: nn.MaxPool1d(kernel_size=3),
-                           linear_layers=config["linear_layers"],
-                           loss_function=nn.MSELoss(),
-                           out_activation=None,
-                           batch_accuracy_func=F.mse_loss)
+net_config = cnn.CNNConfig(
+    dim_in=dataset_train.tensors[0][1].size(),
+    dim_out=dataset_train.tensors[1][1].size(),
+    cnn_channels=config["cnn_channels"],
+    cnn_convolution_gen=lambda c: nn.Conv1d(c[0], c[1], kernel_size=5, padding=2),
+    cnn_pool_gen=lambda: nn.MaxPool1d(kernel_size=2),
+    cnn_pool_each=config["pool_each"],
+    linear_layers=config["linear_layers"],
+    loss_function=nn.MSELoss(),
+    out_activation=None,
+    batch_accuracy_func=F.mse_loss,
+    cnn_activation=nn.ReLU,
+    linear_activation=nn.ReLU)
 
 sampler_train = torch.utils.data.distributed.DistributedSampler(dataset_train,
                                                                 num_replicas=hvd.size(),
@@ -139,23 +149,24 @@ loader_train = torch.utils.data.DataLoader(dataset_train,
                                            batch_size=config["batch_size"],
                                            pin_memory=True,
                                            drop_last=True,
-                                           num_workers=4,
+                                           num_workers=config["workers"],
                                            sampler=sampler_train)
 
 loader_test = torch.utils.data.DataLoader(dataset_test,
                                           batch_size=config["batch_size"],
                                           pin_memory=True,
                                           drop_last=False,
-                                          num_workers=4,
+                                          num_workers=config["workers"],
                                           sampler=sampler_test)
 
+##### NN Code #####
 net = cnn.GenericCNN(net_config, loader_train, loader_test, device)
 if hvd.rank() == 0:
     print(net.summary(config["batch_size"]))
-    wandb.watch(net.net)
+    wandb.watch(net.net, log_freq=100, log="all")
 
-optimizer = torch.optim.Adam(net.net.parameters(), lr=config["lr"])
-optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=net.net.named_parameters())
+optimizer = torch.optim.SGD(net.net.parameters(), lr=config["lr"])
+optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=net.net.named_parameters(), op=hvd.Sum)
 
 hvd.broadcast_parameters(net.net.state_dict(), root_rank=0)
 hvd.broadcast_optimizer_state(optimizer, root_rank=0)
@@ -208,7 +219,6 @@ if hvd.rank() == 0:
 
     df = pd.DataFrame(points)
     df.to_csv((log_dir / "data.csv").resolve(), index=False)
-
     with open((log_dir / "meta.json").resolve(), 'w') as outfile:
         json.dump(
             {
@@ -222,3 +232,5 @@ if hvd.rank() == 0:
                 "horovod": horovod_meta(),
                 "slurm": slurm_meta()
             }, outfile)
+
+    wandb.save(str((log_dir / "*").resolve()), policy="end")

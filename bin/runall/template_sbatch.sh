@@ -12,8 +12,7 @@
 #SBATCH -p alpha
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 #SBATCH -J runall
-#___SBATCH --nodelist {nodelist}
-#SBATCH --hint=nomultithread
+#SBATCH --nodelist {nodelist}
 
 WS_PATH=/lustre/ssd/ws/s8979104-horovod
 VENV=$WS_PATH/venv_torch
@@ -24,4 +23,4 @@ mpirun -N {gpus} \
     -bind-to none --oversubscribe \
     -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH \
     -mca pml ob1 -mca btl ^openib \
-    $VENV/bin/python -u $WS_PATH/sync/code/stress_cnn_horovod.py --data $WS_PATH/data
+    $VENV/bin/python -u {command}

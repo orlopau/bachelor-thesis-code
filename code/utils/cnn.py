@@ -22,6 +22,7 @@ class CNNConfig:
     cnn_channels: list
     cnn_convolution_gen: Callable[[tuple], nn.Module]
     cnn_pool_gen: Callable[[], nn.Module]
+    cnn_pool_each: int
     linear_layers: list
     loss_function: torch.nn.Module
     cnn_activation: torch.nn.Module = nn.ReLU
@@ -51,7 +52,8 @@ class GenericCNN:
         for i, (ch_in, ch_out) in enumerate(zip(conv_layer_channels, conv_layer_channels[1:])):
             conv_layers.append(net_config.cnn_convolution_gen((ch_in, ch_out)))
             conv_layers.append(net_config.cnn_activation())
-            conv_layers.append(net_config.cnn_pool_gen())
+            if (i + 1) % net_config.cnn_pool_each == 0:
+                conv_layers.append(net_config.cnn_pool_gen())
 
         # calc conv output size
         def tuple_reducer(t):
@@ -106,12 +108,12 @@ class GenericCNN:
         """
         accuracy = 0
         for i, (X, Y) in enumerate(self.loader_train):
-            optimizer.zero_grad()
 
             y = self.net(X.to(self.device))
             accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
 
             loss = self.net_config.loss_function(y, Y.to(self.device))
+            optimizer.zero_grad()
             loss.backward()
 
             # clip gradients, arbitrary 1
