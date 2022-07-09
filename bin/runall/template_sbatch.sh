@@ -8,7 +8,7 @@
 #SBATCH --mem-per-cpu=4G
 #SBATCH --gres="gpu:{gpus}"
 #SBATCH --time=1:00:00
-#SBATCH --exclusive
+#___SBATCH --exclusive
 #SBATCH -p alpha
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 #SBATCH -J runall

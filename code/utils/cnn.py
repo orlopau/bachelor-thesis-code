@@ -27,7 +27,7 @@ class CNNConfig:
     loss_function: torch.nn.Module
     cnn_activation: torch.nn.Module = nn.ReLU
     linear_activation: torch.nn.Module = nn.ReLU
-    out_activation: torch.nn.Module = nn.Softmax(dim=1),
+    out_activation: Callable[[], nn.Module] = None,
     # function calculating the accuracy given the target and prediction of a whole batch, having the dimension [batch_size, ...]
     batch_accuracy_func: Callable[[torch.Tensor, torch.Tensor], float] = batch_accuracy_onehot
 
@@ -77,30 +77,30 @@ class GenericCNN:
         dense_layers.append(
             nn.Linear(dense_layer_neurons[-1], net_config.dim_out[0]))
         if net_config.out_activation is not None:
-            dense_layers.append(net_config.out_activation)
+            dense_layers.append(net_config.out_activation())
 
         net = nn.Sequential(*conv_layers, nn.Flatten(), *dense_layers)
 
         return net
 
-    def test(self, loader=None) -> float:
+    def test(self, loader=None) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Tests the network on the test loader returning the accuracy.
+        Tests the network on the test loader returning predictions and targets.
         """
         if loader == None: loader = self.loader_test
 
-        samples = 0
         with torch.no_grad():
             self.net.eval()
-            accuracy = 0
-            iters = 0
+
+            predictions = torch.Tensor().to(self.device)
+            targets = torch.Tensor().to(self.device)
             for (X, Y) in loader:
-                iters += 1
-                samples += X.shape[0]
                 y = self.net(X.to(self.device))
-                accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
+                predictions = torch.cat((predictions, y))
+                targets = torch.cat((targets, Y.to(self.device)))
+
             self.net.train()
-            return float(accuracy / len(loader))
+            return (predictions, targets)
 
     def train(self, optimizer):
         """

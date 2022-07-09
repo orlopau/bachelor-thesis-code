@@ -1,27 +1,36 @@
-import numpy as np
+from sklearn.model_selection import train_test_split
+import utils.distributed as distributed
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
-from sklearn.model_selection import train_test_split
-import argparse
-import platform
+import numpy as np
 import utils.cnn as cnn
-import time
-import matplotlib.pyplot as plt
+import horovod.torch as hvd
 
-print(f"starting a run on node with hostname {platform.node()}")
+config = {
+    "batch_size": 512,
+    "lr": 1e-3,
+    "epochs": 500,
+    "cnn_channels": [40, 50, 40],
+    "pool_each": 1,
+    "linear_layers": [200, 100],
+    "workers": 4
+}
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--data", help="path to data dir", default="/home/paul/dev/bachelor-thesis/code/data")
-args = parser.parse_args()
-
-def create_datasets():
+def create_datasets(args):
     print(f"importing data from {args.data}")
 
-    raw_y = np.load(args.data + "/parameter.train")
-    raw_x = np.load(args.data + "/prepared_data.train")
+    p_y = "/parameter_small.train.npy" if args.small else "/parameter.train"
+    p_x = "/prepared_data_small.train.npy" if args.small else "/prepared_data.train"
 
-    X_train, X_test, y_train, y_test = train_test_split(raw_x, raw_y, test_size=0.25, random_state=42)
+    raw_y = np.load(args.data + p_y)
+    raw_x = np.load(args.data + p_x)
+
+    X_train, X_test, y_train, y_test = train_test_split(raw_x,
+                                                        raw_y,
+                                                        test_size=0.25,
+                                                        random_state=42,
+                                                        shuffle=True)
 
     def normalize(data, max, min):
         max = data.max(axis=0)
@@ -35,51 +44,55 @@ def create_datasets():
     y_train = normalize(y_train, max, min)
     y_test = normalize(y_test, max, min)
 
-    dataset_train = torch.utils.data.TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(y_train).float())
-    dataset_test = torch.utils.data.TensorDataset(torch.from_numpy(X_test).float(), torch.from_numpy(y_test).float())
+    dataset_train = torch.utils.data.TensorDataset(
+        torch.from_numpy(X_train).float(),
+        torch.from_numpy(y_train).float())
+    dataset_test = torch.utils.data.TensorDataset(
+        torch.from_numpy(X_test).float(),
+        torch.from_numpy(y_test).float())
     print(f"created datasets; train={len(dataset_train)}, test={len(dataset_test)}")
 
-    return (dataset_train, dataset_test)
+    return (dataset_train, dataset_test, max, min)
 
-# create datasets, loaders and start training
-(dataset_train, dataset_test) = create_datasets()
+
+class DistributedStressNet(distributed.DistributedNet):
+    def create_test_points(self):
+        (y, Y) = self.cnn_net.test()
+
+        mse = F.mse_loss(y, Y)
+        loss = hvd.allreduce(mse)
+
+        l1loss = hvd.allreduce(torch.mean(torch.abs(Y - y), dim=0))
+        l1loss_scaled = l1loss.cpu() * (self.max - self.min)
+
+        test_point = {
+            "test_acc": float(loss),
+            "test_acc_l1": float(l1loss),
+            "test_acc_g0": float(l1loss_scaled[0]),
+            "test_acc_a": float(l1loss_scaled[1]),
+        }
+
+        return test_point
+
+
+dist_net = DistributedStressNet(config=config, project="stress_cnn")
+(dataset_train, dataset_test, max, min) = create_datasets(dist_net.args)
+dist_net.max = torch.from_numpy(max)
+dist_net.min = torch.from_numpy(min)
 
 net_config = cnn.CNNConfig(
     dim_in=dataset_train.tensors[0][1].size(),
     dim_out=dataset_train.tensors[1][1].size(),
-    cnn_channels=[50,50],
-    cnn_convolution_gen=lambda c: nn.Conv1d(c[0], c[1], kernel_size=5),
-    cnn_pool_gen=lambda: nn.MaxPool1d(kernel_size=3),
-    linear_layers=[200],
+    cnn_channels=config["cnn_channels"],
+    cnn_convolution_gen=lambda c: nn.Conv1d(c[0], c[1], kernel_size=5, padding=2),
+    cnn_pool_gen=lambda: nn.MaxPool1d(kernel_size=2),
+    cnn_pool_each=config["pool_each"],
+    linear_layers=config["linear_layers"],
     loss_function=nn.MSELoss(),
-    out_activation=None,
-    batch_accuracy_func=F.mse_loss
-)
+    out_activation=lambda: nn.Sigmoid(),
+    batch_accuracy_func=F.mse_loss,
+    cnn_activation=nn.ReLU,
+    linear_activation=nn.ReLU)
 
-BATCH_SIZE = 200
-LEARNING_RATE = 0.001
-EPOCHS = 50
-
-loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=BATCH_SIZE, pin_memory=True, drop_last=True, num_workers=4, shuffle=True)
-loader_test = torch.utils.data.DataLoader(dataset_test, batch_size=BATCH_SIZE, pin_memory=True, drop_last=True, num_workers=4)
-
-device = torch.device("cuda")
-
-net = cnn.GenericCNN(net_config, loader_train, loader_test, device)
-
-optimizer = torch.optim.Adam(net.net.parameters(), lr=LEARNING_RATE)
-print(net.summary(BATCH_SIZE))
-
-points = []
-start = time.time()
-for epoch in range(200):
-    start_epoch = time.time()
-    train_acc = net.train(optimizer)
-    test_acc = net.test()
-    time_epoch = time.time() - start_epoch
-    points.append({"epoch": epoch, "acc_train": train_acc, "acc_test": test_acc, "time_epoch": time_epoch, "time": time.time() - start})
-    print(f"Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc}, Took={time_epoch}")
-
-import pandas as pd
-df = pd.DataFrame(points)
-df.to_csv(args.data + "/stats.csv")
+dist_net.init((dataset_train, dataset_test), net_config)
+dist_net.start_training()

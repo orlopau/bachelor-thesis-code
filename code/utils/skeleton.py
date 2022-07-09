@@ -1,3 +1,8 @@
+import horovod.torch as hvd
+import os
+import wandb
+
+
 def isnotebook():
     """Returns true if the method was called in a notebook."""
     try:
@@ -5,3 +10,4 @@ def isnotebook():
         return shell == 'ZMQInteractiveShell'
     except NameError:
         return False
+

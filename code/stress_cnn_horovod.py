@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 import argparse
 import platform
 import utils.cnn as cnn
+import utils.distributed as distributed
 import time
 import horovod.torch as hvd
 import os
@@ -30,20 +31,6 @@ parser.add_argument(
 parser.add_argument("--group", help="group", required=True)
 parser.add_argument("--name", help="name")
 args = parser.parse_args()
-
-
-def horovod_meta():
-    return {
-        "size": hvd.size(),
-        "mpi_enabled": hvd.mpi_enabled(),
-        "gloo_enabled": hvd.gloo_enabled(),
-        "nccl_built": hvd.nccl_built()
-    }
-
-
-def slurm_meta():
-    return {x[0]: x[1] for x in os.environ.items() if x[0].startswith("SLURM")}
-
 
 def create_datasets():
     print(f"importing data from {args.data}")
@@ -80,7 +67,7 @@ def create_datasets():
         torch.from_numpy(y_test).float())
     print(f"created datasets; train={len(dataset_train)}, test={len(dataset_test)}")
 
-    return (dataset_train, dataset_test)
+    return (dataset_train, dataset_test, max, min)
 
 
 # create datasets, loaders and start training
@@ -93,9 +80,9 @@ config = {
     "batch_size": 512,
     "lr": 1e-3,
     "epochs": 200,
-    "cnn_channels": [64, 128, 128, 64],
-    "pool_each": 2,
-    "linear_layers": [512, 256],
+    "cnn_channels": [20, 20],
+    "pool_each": 1,
+    "linear_layers": [200],
     "workers": 4
 }
 
@@ -103,8 +90,8 @@ if hvd.rank() == 0:
     wandb.init(project="stress_cnn_horovod",
                config={
                    "config": config,
-                   "horovod": horovod_meta(),
-                   "slurm": slurm_meta()
+                   "horovod": distributed.horovod_meta(),
+                   "slurm": distributed.slurm_meta()
                },
                group=args.group,
                name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}"
@@ -118,7 +105,7 @@ device = torch.device(device_string if torch.cuda.is_available() else "cpu")
 
 print(f"running hvd on rank {hvd.rank()}, device {device}")
 
-(dataset_train, dataset_test) = create_datasets()
+(dataset_train, dataset_test, max, min) = create_datasets()
 
 net_config = cnn.CNNConfig(
     dim_in=dataset_train.tensors[0][1].size(),
@@ -129,7 +116,7 @@ net_config = cnn.CNNConfig(
     cnn_pool_each=config["pool_each"],
     linear_layers=config["linear_layers"],
     loss_function=nn.MSELoss(),
-    out_activation=None,
+    out_activation=lambda: nn.Sigmoid(),
     batch_accuracy_func=F.mse_loss,
     cnn_activation=nn.ReLU,
     linear_activation=nn.ReLU)
@@ -205,6 +192,18 @@ for epoch in range(config["epochs"]):
         print(f"""Epoch {epoch}, AccTrain={train_acc}, AccTest={test_acc_dist}, 
             Took={point['time_epoch']}""")
 
+    with torch.no_grad():
+        net.net.eval()
+        mses = torch.Tensor()
+        for (X, Y) in net.loader_test:
+            y = net.net(X.to(net.device))
+            mse = torch.abs(Y - y.cpu())
+            mses = torch.cat((mses, mse))
+        net.net.train()
+
+        scaled_mse = torch.mean(mses.cpu(), dim=0) * (max - min)
+        print(f"Accuracy RMSE: {scaled_mse}")
+
 if hvd.rank() == 0:
     import pandas as pd
     from pathlib import Path
@@ -229,8 +228,8 @@ if hvd.rank() == 0:
                     "test_size": len(dataset_test),
                     "config": config,
                 },
-                "horovod": horovod_meta(),
-                "slurm": slurm_meta()
+                "horovod": distributed.horovod_meta(),
+                "slurm": distributed.slurm_meta()
             }, outfile)
 
     wandb.save(str((log_dir / "*").resolve()), policy="end")
