@@ -71,7 +71,7 @@ class DistributedNet():
         cnn_net = cnn.GenericCNN(net_config, *self.loaders, self.device)
         self.cnn_net = cnn_net
 
-        optimizer = torch.optim.SGD(cnn_net.net.parameters(), lr=self.config["lr"])
+        optimizer = torch.optim.Adam(cnn_net.net.parameters(), lr=self.config["lr"])
         self.optimizer = hvd.DistributedOptimizer(optimizer,
                                                   named_parameters=cnn_net.net.named_parameters(),
                                                   op=hvd.Sum)

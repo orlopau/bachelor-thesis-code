@@ -84,10 +84,10 @@ else:
 # In[9]:
 
 
-y_data_original = np.load("/home/paul/dev/bachelor-thesis/code/data/parameter.train")
+y_data_original = np.load("/home/paul/dev/bachelor-thesis/code/data/parameter_small.train.npy")
 num_out = y_data_original.shape[1]
 num_all = y_data_original.shape[0]
-x_data_original = np.load("/home/paul/dev/bachelor-thesis/code/data/prepared_data.train")
+x_data_original = np.load("/home/paul/dev/bachelor-thesis/code/data/prepared_data_small.train.npy")
 num_in = x_data_original.shape[2]
 
 if num_channels == 1:
@@ -97,6 +97,8 @@ print(0)
 
 # split training and test data
 x_train_unscaled, x_test_unscaled, y_train_unscaled, y_test_unscaled = train_test_split(x_data_original, y_data_original, test_size=val_share, random_state=42)
+del x_data_original
+del y_data_original
 
 print(1)
 # In[12]:

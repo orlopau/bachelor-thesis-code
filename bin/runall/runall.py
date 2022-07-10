@@ -59,7 +59,8 @@ print(f"config: {configs}")
 
 # copy script to another file to prevent changes mid run
 ws_path = Path("/lustre/ssd/ws/s8979104-horovod")
-script_path = ws_path / "sync/code/stress_cnn.py"
+script_name  = "cifar_cnn.py"
+script_path = ws_path / "sync/code" / script_name
 utils_path = ws_path / "sync/code/utils"
 
 target_path = ws_path / "data/tmp_scripts" / f"tmp_{uuid.uuid4().hex[:8]}"
@@ -95,7 +96,7 @@ mpirun -N {config["gpus"]} \\
     -bind-to none --oversubscribe \\
     -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH \\
     -mca pml ob1 -mca btl ^openib \\
-    $VENV/bin/python -u {(target_path / "stress_cnn.py").resolve()} --data $WS_PATH/data --group {args.group} {"" if args.name is None else f"--name {args.name}"}
+    $VENV/bin/python -u {(target_path / script_name).resolve()} --data $WS_PATH/data --group {args.group} {"" if args.name is None else f"--name {args.name}"}
     """
 
     print(f"running with {config}")

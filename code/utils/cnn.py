@@ -30,6 +30,7 @@ class CNNConfig:
     out_activation: Callable[[], nn.Module] = None,
     # function calculating the accuracy given the target and prediction of a whole batch, having the dimension [batch_size, ...]
     batch_accuracy_func: Callable[[torch.Tensor, torch.Tensor], float] = batch_accuracy_onehot
+    dropout: float = 0.5
 
 
 class GenericCNN:
@@ -59,11 +60,12 @@ class GenericCNN:
         def tuple_reducer(t):
             return t[0] if type(t) is tuple else t
 
-        conv_dims = utils_ml.conv_out_dim(net_config.dim_in[1], [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride), tuple_reducer(layer.padding))
-                                                                               for layer in filter(lambda l: type(l) is not net_config.cnn_activation, conv_layers)])
-        
+        convs = [(tuple_reducer(layer.kernel_size), tuple_reducer(layer.stride), tuple_reducer(layer.padding))
+                                                                               for layer in filter(lambda l: type(l) not in [net_config.cnn_activation, nn.Dropout], conv_layers)]
+        conv_dims = utils_ml.conv_out_dim(net_config.dim_in[1], convs)
+
         conv_out_dim = conv_dims[-1]
-        if net_config.cnn_convolution_gen((1,1)) == nn.Conv2d:
+        if type(net_config.cnn_convolution_gen((1,1))) == nn.Conv2d:
             conv_out_dim = conv_out_dim**2
 
         flatten_dim = conv_layer_channels[-1] * conv_out_dim
@@ -73,6 +75,7 @@ class GenericCNN:
         for n_in, n_out in zip(dense_layer_neurons, dense_layer_neurons[1:]):
             dense_layers.append(nn.Linear(n_in, n_out))
             dense_layers.append(net_config.linear_activation())
+            if net_config.dropout is not None: dense_layers.append(nn.Dropout(net_config.dropout))
 
         dense_layers.append(
             nn.Linear(dense_layer_neurons[-1], net_config.dim_out[0]))
@@ -108,7 +111,6 @@ class GenericCNN:
         """
         accuracy = 0
         for i, (X, Y) in enumerate(self.loader_train):
-
             y = self.net(X.to(self.device))
             accuracy += self.net_config.batch_accuracy_func(y, Y.to(self.device))
 
