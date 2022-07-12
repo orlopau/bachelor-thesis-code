@@ -6,6 +6,7 @@ import argparse
 import shutil
 import uuid
 
+
 def _grid_search(lists):
     if len(lists) == 1:
         return [[x] for x in lists[0]]
@@ -45,12 +46,14 @@ parser.add_argument("--nodes", help="nodes as list", default="1")
 parser.add_argument("--group", help="group for wandb", required=True)
 parser.add_argument("--name", help="name for wandb")
 parser.add_argument("--nodelist", help="nodelist to use")
+parser.add_argument("--script", help="script")
 args = parser.parse_args()
 
 grid_args = copy.deepcopy(vars(args))
 grid_args.pop("name")
 grid_args.pop("group")
 grid_args.pop("nodelist")
+grid_args.pop("script")
 
 grid_config = {k: v.split(",") for k, v in grid_args.items()}
 configs = grid_search(grid_config)
@@ -59,7 +62,7 @@ print(f"config: {configs}")
 
 # copy script to another file to prevent changes mid run
 ws_path = Path("/lustre/ssd/ws/s8979104-horovod")
-script_name  = "cifar_cnn.py"
+script_name = args.script
 script_path = ws_path / "sync/code" / script_name
 utils_path = ws_path / "sync/code/utils"
 
@@ -80,8 +83,8 @@ for config in configs:
 #SBATCH --cpus-per-task=4
 #SBATCH --mem-per-cpu=4G
 #SBATCH --gres="gpu:{config["gpus"]}"
-#SBATCH --time=1:00:00
-#SBATCH --exclusive
+#SBATCH --time=2:00:00
+#___SBATCH --exclusive
 #SBATCH -p alpha
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 #SBATCH -J runall
