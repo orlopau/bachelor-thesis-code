@@ -1,7 +1,5 @@
 from torchinfo import summary
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import horovod.torch as hvd
 import wandb
 import os
@@ -9,8 +7,8 @@ import argparse
 import random
 import numpy as np
 import platform
-import utils.cnn as cnn
 import time
+from abc import ABC, abstractmethod
 
 
 def horovod_meta():
@@ -47,12 +45,13 @@ def get_args():
                         action="store_true")
     parser.add_argument("--group", help="group", required=True)
     parser.add_argument("--name", help="name")
+    parser.add_argument("--profile", action="store_true")
 
     args = parser.parse_args()
     return args
 
 
-class DistributedRunnable():
+class DistributedRunnable(ABC):
 
     def __init__(self, net: torch.nn.Module, optimizer: torch.optim.Optimizer, datasets, meta) -> None:
         self.net = net
@@ -60,10 +59,12 @@ class DistributedRunnable():
         self.datasets = datasets
         self.meta = meta
 
+    @abstractmethod
     def train_epoch(self, loader, optimizer, device):
         """Performs a training epoch. Should return a dict of results."""
         pass
 
+    @abstractmethod
     def test(self, loader, mean_reduce, device):
         """Performs testing of the network. Should return a dict of results."""
         pass
@@ -105,8 +106,8 @@ class DistributedRunner():
                        group=self.args.group,
                        name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}"
                        if self.args.name is None else self.args.name,
-                       dir="/tmp",
-                       save_code=True)
+                       dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
+                       settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
 
     def is_logger(self):
         return hvd.rank() == 0

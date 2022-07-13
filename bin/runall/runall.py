@@ -84,8 +84,9 @@ for config in configs:
 #SBATCH --mem-per-cpu=4G
 #SBATCH --gres="gpu:{config["gpus"]}"
 #SBATCH --time=2:00:00
-#___SBATCH --exclusive
+#SBATCH --exclusive
 #SBATCH -p alpha
+#SBATCH --hint=multithread
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 #SBATCH -J runall
 {"" if args.nodelist is None else f"#SBATCH --nodelist {args.nodelist}"}

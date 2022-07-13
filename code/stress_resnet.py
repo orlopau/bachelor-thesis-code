@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from sklearn.model_selection import train_test_split
 import utils.distributed as distributed
 import torch
@@ -6,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from utils import resnet
 from torchinfo import summary
+from torch.profiler import profile, record_function, ProfilerActivity, schedule
 
 
 def create_datasets(args):
@@ -69,31 +71,40 @@ class StressRunnable(distributed.DistributedRunnable):
                  datasets,
                  meta,
                  y_max=0,
-                 y_min=0) -> None:
+                 y_min=0,
+                 prof: profile = None) -> None:
         super().__init__(net, optimizer, datasets, meta)
         self.loss = nn.MSELoss()
         self.y_max = y_max
         self.y_min = y_min
+        self.prof = prof
 
     def train_epoch(self, loader, optimizer, device):
-        accuracy = 0
-        for i, (X, Y) in enumerate(loader):
-            Y = Y.to(device)
+        with ExitStack() as stack:
+            if self.prof is not None:
+                stack.enter_context(record_function("train_epoch"))
+                stack.callback(self.prof.step)
 
-            y = self.net(X.to(device))
+            accuracy = 0
+            for i, (X, Y) in enumerate(loader):
+                Y = Y.to(device)
 
-            loss = self.loss(y, Y)
-            accuracy += loss
+                y = self.net(X.to(device))
 
-            optimizer.zero_grad()
-            loss.backward()
+                loss = self.loss(y, Y)
+                accuracy += loss
 
-            optimizer.step()
+                optimizer.zero_grad()
+                loss.backward()
 
-        return {"acc_train": float(accuracy / len(loader))}
+                optimizer.step()
+
+            return {"acc_train": float(accuracy / len(loader))}
 
     def test(self, loader, mean_reduce, device):
-        with torch.no_grad():
+        with ExitStack() as stack:
+            stack.enter_context(torch.no_grad())
+
             self.net.eval()
 
             predictions = torch.Tensor().to(device)
@@ -117,37 +128,58 @@ class StressRunnable(distributed.DistributedRunnable):
             print(test_point)
 
             self.net.train()
+
             return test_point
 
 
+batch_mult = 6
+
 config = {
-    "batch_size": 1024 * 3,
-    "lr": 1e-5 * 3,
-    "epochs": 200,
+    "batch_size": 1024 * batch_mult,
+    "lr": 1e-4 * batch_mult,
+    "epochs": 100,
     "workers": 8,
-    "resnet": 34,
     "pre_kernel": 3,
     "pre_stride": 2,
     "pre_padding": 1,
     "model": "res34"
 }
 
-(dataset_train, dataset_test, max, min) = create_datasets(distributed.get_args())
+models = {"res18": resnet.create_resnet18, "res34": resnet.create_resnet34}
 
-model = resnet.create_resnet34(2,
-                               config["pre_kernel"],
-                               config["pre_stride"],
-                               config["pre_padding"],
-                               conv_dim="1d")
+(dataset_train, dataset_test, max, min) = create_raw_datasets(
+    distributed.get_args()) if distributed.get_args().small else create_datasets(distributed.get_args())
+
+model = models[config["model"]](2,
+                                config["pre_kernel"],
+                                config["pre_stride"],
+                                config["pre_padding"],
+                                conv_dim="1d")
 
 optimizer = torch.optim.SGD(model.parameters(), config['lr'], momentum=0.9, weight_decay=1e-4)
-runnable = StressRunnable(model, optimizer, (dataset_train, dataset_test), config, max, min)
 
-runner = distributed.DistributedRunner(runnable,
-                                       project="resnet_stress",
-                                       batch_size=config["batch_size"],
-                                       workers=config["workers"])
+## profiling ###
+prof_schedule = schedule(skip_first=0, wait=0, warmup=0, active=3, repeat=2)
 
-if runner.is_logger():
-    summary(model, (1, 3, 201))
-runner.start_training(config["epochs"])
+
+def trace_handler(p):
+    print(p.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+
+
+with ExitStack() as stack:
+    p = None
+    if distributed.get_args().profile:
+        p = stack.enter_context(
+            profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                    schedule=prof_schedule,
+                    on_trace_ready=torch.profiler.tensorboard_trace_handler("./data/profiler")))
+
+    runnable = StressRunnable(model, optimizer, (dataset_train, dataset_test), config, max, min, prof=p)
+    runner = distributed.DistributedRunner(runnable,
+                                           project="resnet_stress",
+                                           batch_size=config["batch_size"],
+                                           workers=config["workers"])
+
+    if runner.is_logger():
+        summary(model, (1, 3, 201))
+    runner.start_training(config["epochs"])
