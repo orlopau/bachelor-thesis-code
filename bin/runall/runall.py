@@ -84,7 +84,7 @@ for config in configs:
 #SBATCH --mem-per-cpu=4G
 #SBATCH --gres="gpu:{config["gpus"]}"
 #SBATCH --time=2:00:00
-#SBATCH --exclusive
+#___SBATCH --exclusive
 #SBATCH -p alpha
 #SBATCH --hint=multithread
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
@@ -92,7 +92,7 @@ for config in configs:
 {"" if args.nodelist is None else f"#SBATCH --nodelist {args.nodelist}"}
 
 WS_PATH=/lustre/ssd/ws/s8979104-horovod
-VENV=$WS_PATH/venv_torch
+VENV=$WS_PATH/venv_hvd_mpi
 
 source $VENV/bin/activate
 

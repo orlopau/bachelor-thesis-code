@@ -11,6 +11,7 @@ from torchvision import transforms
 from torchinfo import summary
 from utils import resnet
 
+
 def create_datasets(args, mem=False):
     print(f"importing data from {args.data}")
 
@@ -97,8 +98,8 @@ class CifarRunner(distributed.DistributedRunnable):
 
 
 config = {
-    "batch_size": 256*10,
-    "lr": 1e-4*10,
+    "batch_size": 256 * 10,
+    "lr": 1e-4 * 10,
     "epochs": 50,
     "workers": 8,
     "pre_kernel": 3,
@@ -107,21 +108,18 @@ config = {
     "model": "res18"
 }
 
-models = {
-    "res18": resnet.create_resnet18,
-    "res34": resnet.create_resnet34
-}
+models = {"res18": resnet.create_resnet18, "res34": resnet.create_resnet34}
 
 model = models[config["model"]](10, config["pre_kernel"], config["pre_stride"], config["pre_padding"])
 
 optimizer = torch.optim.SGD(model.parameters(), config['lr'], weight_decay=1e-4, momentum=0.9)
 runnable = CifarRunner(model, optimizer, create_datasets(distributed.get_args(), mem=False), config)
 
-runner = distributed.DistributedRunner(runnable,
-                                       project="resnet_cifar",
-                                       batch_size=config["batch_size"],
-                                       workers=config["workers"])
+runner = distributed.DistributedHvdRunner(runnable,
+                                          project="resnet_cifar",
+                                          batch_size=config["batch_size"],
+                                          workers=config["workers"])
 
-if runner.is_logger():
+if distributed.is_logger():
     summary(model, (1, 3, 32, 32))
 runner.start_training(config["epochs"])
