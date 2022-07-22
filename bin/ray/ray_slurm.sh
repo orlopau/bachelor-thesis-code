@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --tasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=32GB
+#SBATCH --mem=60G
 #SBATCH --gres="gpu:4"
-#SBATCH --time=1:30:00
-#SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch.log
+#SBATCH --time=4:00:00
+#___SBATCH -p alpha
+#SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 
 ml restore default
 

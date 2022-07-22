@@ -1,5 +1,6 @@
 from torchinfo import summary
 import torch
+from torch.utils.data import DataLoader
 import horovod.torch as hvd
 import wandb
 import os
@@ -27,72 +28,116 @@ def is_logger():
     return hvd.is_initialized() and hvd.rank() == 0
 
 
-def get_device(single_gpu=False):
-    if not hvd.is_initialized(): hvd.init()
+def get_device_hvd(single_gpu=False):
+    if not hvd.is_initialized():
+        hvd.init()
 
     device_string = "cuda:0" if single_gpu else f"cuda:{hvd.local_rank()}"
     return torch.device(device_string if torch.cuda.is_available() else "cpu")
 
 
-class DistributedRunnable(ABC):
+def create_loaders(dataset_train,
+                   dataset_test,
+                   batch_size_train,
+                   batch_size_test,
+                   workers,
+                   pin_memory=True,
+                   sampler_train=None,
+                   sampler_test=None) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+    loader_train = DataLoader(dataset_train,
+                              batch_size=batch_size_train,
+                              pin_memory=pin_memory,
+                              drop_last=True,
+                              num_workers=workers,
+                              sampler=sampler_train)
 
-    def __init__(self, net: torch.nn.Module, optimizer: torch.optim.Optimizer, datasets, meta,
+    loader_test = DataLoader(dataset_test,
+                             batch_size=batch_size_test,
+                             pin_memory=pin_memory,
+                             drop_last=False,
+                             num_workers=workers,
+                             sampler=sampler_test)
+
+    loader_train.sampler
+
+    print(f"created loaders with batch sizes: {batch_size_train} train; {batch_size_test} test")
+    return (loader_train, loader_test)
+
+
+def create_loaders_hvd(dataset_train,
+                       dataset_test,
+                       batch_size_train,
+                       batch_size_test,
+                       workers,
+                       pin_memory=True) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
+
+    sampler_train = torch.utils.data.distributed.DistributedSampler(dataset_train,
+                                                                    num_replicas=hvd.size(),
+                                                                    rank=hvd.rank(),
+                                                                    shuffle=True,
+                                                                    drop_last=True)
+
+    sampler_test = torch.utils.data.distributed.DistributedSampler(dataset_test,
+                                                                   num_replicas=hvd.size(),
+                                                                   rank=hvd.rank(),
+                                                                   shuffle=False)
+
+    return create_loaders(dataset_train, dataset_test, batch_size_train, batch_size_test, workers,
+                          pin_memory, sampler_train, sampler_test)
+
+
+class Runnable(ABC):
+
+    def __init__(self, net: torch.nn.Module, optimizer: torch.optim.Optimizer, loader_train, loader_test,
                  device) -> None:
-        self.net = net
+        self.net = net.to(device)
         self.optimizer = optimizer
-        self.datasets = datasets
-        self.meta = meta
         self.device = device
         self.test_hooks = []
+        self.loader_train, self.loader_test = loader_train, loader_test
 
     @abstractmethod
-    def train_batch(self, X, Y, optimizer):
+    def train_batch(self, X, Y):
         """Performs training for a mini-batch."""
         pass
 
     @abstractmethod
-    def train_epoch(self, loader, optimizer, device):
+    def train(self):
         """Performs a training epoch. Should return a dict of results."""
         return None
 
     @abstractmethod
-    def test(self, loader, mean_reduce, device):
+    def test(self, mean_reduce=lambda x: x):
         """Performs testing of the network. Should return a dict of results."""
         pass
-
-    def add_test_hook(self, f):
-        self.test_hooks.append(f)
 
 
 class Runner():
 
-    def __init__(self, device, data_dir="/home/paul/dev/bachelor-thesis/code/data", log_dir="logs") -> None:
-        self.data_dir, self.log_dir = data_dir, log_dir
-        self.points = []
+    def __init__(self) -> None:
         self.epoch_hooks = []
-        self.device = device
         print(f"initializing runner on node with hostname {platform.node()}")
 
-    def set_runnable(self, runnable: DistributedRunnable, batch_size=128, workers=4):
+    def set_runnable(self, runnable: Runnable):
         self.runnable = runnable
-        self.runnable.device = self.device
-        self.runnable.net.to(self.device)
-        self.loaders = self.create_loaders(*runnable.datasets, batch_size, workers)
 
-    def start_training(self, epochs):
+    def start_training(self, epochs, mean_reduce=lambda x: x):
         r = self.runnable
 
         self.start = time.time()
 
         for epoch in range(epochs):
-            print(f"Epoch {epoch}:")
+            if is_logger(): print(f"Epoch {epoch}:")
+            
+            if r.loader_train.sampler is not None and hasattr(r.loader_train.sampler, 'set_epoch'):
+                r.loader_train.sampler.set_epoch(epoch)
 
             time_train_start = time.time()
-            data_train = r.train_epoch(self.loaders[0], r.optimizer)
+            data_train = r.train()
             time_train = time.time() - time_train_start
 
             time_test_start = time.time()
-            data_test = r.test(self.loaders[1], lambda x: x)
+            data_test = r.test(mean_reduce)
             time_test = time.time() - time_test_start
 
             point = {
@@ -104,31 +149,17 @@ class Runner():
                 **data_train,
                 **data_test,
             }
-            self.points.append(point)
+
+            if is_logger():
+                print(point)
+                print(f"Took: {point['time_epoch']:2f}s")
+                print("============================")
+
             for hook in self.epoch_hooks:
                 hook(point)
 
-            print(f"Took: {point['time_epoch']:2f}s")
-            print("============================")
 
-    def create_loaders(self, dataset_train, dataset_test, batch_size,
-                       workers) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
-        loader_train = torch.utils.data.DataLoader(dataset_train,
-                                                   batch_size=batch_size,
-                                                   pin_memory=True,
-                                                   drop_last=True,
-                                                   num_workers=workers)
-
-        loader_test = torch.utils.data.DataLoader(dataset_test,
-                                                  batch_size=10000,
-                                                  pin_memory=True,
-                                                  drop_last=False,
-                                                  num_workers=workers)
-
-        return (loader_train, loader_test)
-
-
-class DistributedHvdRunner():
+class DistributedHvdRunner(Runner):
 
     def __init__(self,
                  group,
@@ -136,22 +167,13 @@ class DistributedHvdRunner():
                  name=None,
                  data_dir="/home/paul/dev/bachelor-thesis/code/data",
                  log_dir="logs") -> None:
+
+        super().__init__(device, data_dir, log_dir)
         self.name, self.group, self.project = name, group, project
         self.data_dir, self.log_dir = data_dir, log_dir
         self.points = []
         self.epoch_hooks = []
-        self.init()
 
-    def set_runnable(self, runnable: DistributedRunnable, batch_size_train=128, batch_size_test=128, workers=4):
-        self.runnable = runnable
-        wandb.config["run"] = self.runnable.meta
-
-        self.runnable.device = self.device
-        self.runnable.net.to(self.device)
-
-        self.loaders = self.create_loaders(*runnable.datasets, batch_size_train, batch_size_test, workers)
-
-    def init(self):
         print("init hvd and seeding...")
         hvd.init()
         np.random.seed(hvd.rank())
@@ -159,7 +181,7 @@ class DistributedHvdRunner():
         random.seed(hvd.rank())
 
         print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
-        self.device = get_device()
+        self.device = get_device_hvd()
         print(f"running hvd on rank {hvd.rank()}, device {self.device}")
 
         if hvd.rank() == 0:
@@ -173,6 +195,10 @@ class DistributedHvdRunner():
                        if self.name is None else self.name,
                        dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
                        settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
+
+    def set_runnable(self, runnable: Runnable):
+        self.runnable = runnable
+        wandb.config["run"] = self.runnable.meta
 
     def start_training(self, epochs):
         r = self.runnable
@@ -194,7 +220,7 @@ class DistributedHvdRunner():
             self.loaders[0].sampler.set_epoch(epoch)
 
             time_train_start = time.time()
-            data_train = r.train_epoch(self.loaders[0], optimizer)
+            data_train = r.train(self.loaders[0], optimizer)
             time_train = time.time() - time_train_start
 
             time_test_start = time.time()
@@ -241,33 +267,3 @@ class DistributedHvdRunner():
                     "run": self.runnable.meta
                 }, outfile)
             wandb.save(str((log_dir / "*").resolve()), policy="end")
-
-    def create_loaders(self, dataset_train, dataset_test, batch_size_train, batch_size_test,
-                       workers) -> tuple[torch.utils.data.DataLoader, torch.utils.data.DataLoader]:
-
-        sampler_train = torch.utils.data.distributed.DistributedSampler(dataset_train,
-                                                                        num_replicas=hvd.size(),
-                                                                        rank=hvd.rank(),
-                                                                        shuffle=True,
-                                                                        drop_last=True)
-
-        sampler_test = torch.utils.data.distributed.DistributedSampler(dataset_test,
-                                                                       num_replicas=hvd.size(),
-                                                                       rank=hvd.rank(),
-                                                                       shuffle=False)
-
-        loader_train = torch.utils.data.DataLoader(dataset_train,
-                                                   batch_size=batch_size_train,
-                                                   pin_memory=True,
-                                                   drop_last=True,
-                                                   num_workers=workers,
-                                                   sampler=sampler_train)
-
-        loader_test = torch.utils.data.DataLoader(dataset_test,
-                                                  batch_size=batch_size_test,
-                                                  pin_memory=True,
-                                                  drop_last=False,
-                                                  num_workers=workers,
-                                                  sampler=sampler_test)
-
-        return (loader_train, loader_test)

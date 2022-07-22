@@ -39,11 +39,11 @@ except ModuleNotFoundError:
 
 
 def subprocess_output_list(cmd):
-    return subprocess.check_output(cmd, shell=True, timeout=30).decode().splitlines()
+    return subprocess.check_output(cmd, shell=True, timeout=120).decode().splitlines()
 
 
 def subprocess_output(cmd):
-    return subprocess.check_output(cmd, shell=True, timeout=30).decode().strip()
+    return subprocess.check_output(cmd, shell=True, timeout=120).decode().strip()
 
 
 def cleanup():
@@ -75,7 +75,9 @@ print(f"head node: {hostnames[0]}, ip: {head_ip}")
 
 slurm_cpus_per_task = int(os.environ['SLURM_CPUS_PER_TASK'])
 # TODO get gpus from gres, gpus per task doesnt work on taurus
-slurm_gpus_per_task = int(os.environ.get('SLURM_GPUS_PER_TASK', 4))
+
+slurm_gpus_per_task = len(os.environ.get("SLURM_JOB_GPUS").split(','))
+print(f"N_GPUS: {slurm_gpus_per_task}")
 # only allocations where each node has the same number of tasks are allowed, i.e. SLURM_TASKS_PER_NODE must have a form like "2(x5)"
 slurm_tasks_per_node = int(os.environ.get(
     'SLURM_TASKS_PER_NODE').split('(')[0])

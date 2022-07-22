@@ -1,6 +1,9 @@
+#!/usr/bin/env python
+
 from contextlib import ExitStack
-from sched import scheduler
-import sched
+import platform
+import random
+import wandb
 import utils.distributed as distributed
 import torch
 import torch.nn as nn
@@ -8,8 +11,13 @@ import torch.nn.functional as F
 import numpy as np
 from utils import resnet
 from utils import cnn
-from torchinfo import summary
 from utils import args
+
+if args.get_args().dist:
+    import horovod.torch as hvd
+
+if args.get_args().tprof:
+    from torch.profiler import profile, record_function, ProfilerActivity, schedule
 
 
 def create_datasets(path):
@@ -30,59 +38,72 @@ def create_datasets(path):
         return (dataset_train, dataset_test, meta["y_max"], meta["y_min"])
 
 
-class StressRunnable(distributed.DistributedRunnable):
+class StressRunnable(distributed.Runnable):
 
     def __init__(self,
                  net: torch.nn.Module,
                  optimizer: torch.optim.Optimizer,
-                 datasets,
-                 meta,
+                 loader_train,
+                 loader_test,
                  device,
                  y_max=0,
                  y_min=0,
                  scheduler=None) -> None:
-        super().__init__(net, optimizer, datasets, meta, device)
+        super().__init__(net, optimizer, loader_train, loader_test, device)
         self.loss = nn.MSELoss()
         self.y_max = y_max
         self.y_min = y_min
         self.scheduler = scheduler
 
-    def train_batch(self, X, Y, optimizer):
+    def train_batch(self, X, Y):
         y = self.net(X)
 
         loss = self.loss(y, Y)
 
-        optimizer.zero_grad()
+        self.optimizer.zero_grad()
         loss.backward()
-
-        optimizer.step()
-
-        if self.scheduler is not None:
-            self.scheduler.step()
+        self.optimizer.step()
 
         return loss.float()
 
-    def train_epoch(self, loader, optimizer):
-        accuracy = 0
-        for X, Y in loader:
-            accuracy += self.train_batch(X.to(self.device), Y.to(self.device), optimizer)
+    def train(self):
+        with ExitStack() as stack:
+            if args.get_args().tprof:
+                stack.enter_context(record_function("model_train"))
+            if args.get_args().dlprof:
+                stack.enter_context(torch.autograd.profiler.emit_nvtx())
 
-        mean_acc = float(accuracy / len(loader))
+            accuracy = 0
+            for X, Y in self.loader_train:
+                accuracy += self.train_batch(X.to(self.device), Y.to(self.device))
+                if args.get_args().tprof:
+                    prof.step()
 
-        if distributed.is_logger():
-            print(f"TRAIN: Acc={mean_acc:.6f}")
-        return {"acc_train": mean_acc}
+            mean_acc = float(accuracy / len(self.loader_train))
 
-    def test(self, loader, mean_reduce):
+            res = {"acc_train": mean_acc}
+
+            if self.scheduler is not None:
+                self.scheduler.step()
+                res["sched_lr"] = self.optimizer.param_groups[0]['lr']
+
+            if distributed.is_logger():
+                print(f"TRAIN: Acc={mean_acc:.6f}")
+
+            return res
+
+    def test(self, mean_reduce=lambda x: x):
         with ExitStack() as stack:
             stack.enter_context(torch.no_grad())
+            if args.get_args().tprof:
+                stack.enter_context(record_function("model_test"))
 
             self.net.eval()
 
             predictions = torch.Tensor().to(self.device)
             targets = torch.Tensor().to(self.device)
 
-            for (X, Y) in loader:
+            for (X, Y) in self.loader_test:
                 y = self.net(X.to(self.device))
                 predictions = torch.cat((predictions, y))
                 targets = torch.cat((targets, Y.to(self.device)))
@@ -111,9 +132,9 @@ def create_model(config):
         res_params = (2, config["pre_kernel"], config["pre_stride"], config["pre_padding"], "1d")
 
     if config["model"] == "res18":
-        return resnet.create_resnet18(*res_params)
+        model = resnet.create_resnet18(*res_params)
     elif config["model"] == "res34":
-        return resnet.create_resnet34(*res_params)
+        model = resnet.create_resnet34(*res_params)
     elif config["model"] == "cnn":
         net_config = cnn.CNNConfig(dim_in=(3, 201),
                                    dim_out=(2,),
@@ -128,14 +149,9 @@ def create_model(config):
                                    cnn_activation=nn.ReLU,
                                    linear_activation=nn.ReLU,
                                    dropout=config["dropout"])
-        return cnn.create_cnn(net_config)
+        model = cnn.create_cnn(net_config)
     else:
         raise Exception(f"no model found for {config['model']}")
-
-
-def create_runnable(config, device, data_dir):
-    model = create_model(config)
-    (dataset_train, dataset_test, max, min) = create_datasets(data_dir)
 
     optimizer = {
         "sgd": torch.optim.SGD(model.parameters(), config["lr"], momentum=0.9),
@@ -143,48 +159,21 @@ def create_runnable(config, device, data_dir):
     }[config["optimizer"]]
 
     scheduler = None
-    if config["sched_cyclic"]:
+    if config["sched"] == "StepLR":
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config["step_size"], config["gamma"])
+    elif config["sched"] == "Cyclic":
         # step size should be 2-10 times the batches (steps) per epoch
-        batches_per_epoch = len(dataset_train) // config["batch_size"]
+        # TODO fixed step size!!!!!!!
+        batches_per_epoch = 750000 // config["batch_size"]
         step_size = batches_per_epoch * 4
         print(f"step size: {step_size} @ batches per epoch {batches_per_epoch}")
-        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=config["lr"], max_lr=config["lr_max"], step_size_up=step_size)
+        scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer,
+                                                      base_lr=config["lr"],
+                                                      max_lr=config["lr_max"],
+                                                      step_size_up=step_size)
 
-    runnable = StressRunnable(model,
-                              optimizer, (dataset_train, dataset_test),
-                              config,
-                              device,
-                              max,
-                              min,
-                              scheduler=scheduler)
+    return (model, optimizer, scheduler)
 
-    # if distributed.is_logger():
-    #     summary(model, (config["batch_size"], 3, 201))
-
-    return runnable
-
-
-def create_runner(config, runnable, group, name, data_dir):
-    runner = distributed.DistributedHvdRunner(group, project="resnet_stress", name=name, data_dir=data_dir)
-    runner.set_runnable(runnable, batch_size_train=config["batch_size"], batch_size_test=50000, workers=config["workers"])
-    return runner
-
-
-# conf = {
-#     "pre_kernel": 3,
-#     "pre_stride": 2,
-#     "pre_padding": 1,
-#     "cnn_channels": [15, 38],
-#     "linear_layers": [197],
-#     "pool_each": 1,
-#     "dropout": None,
-#     "batch_size": 128,
-#     "lr": 6e-5,
-#     "epochs": 100,
-#     "workers": 8,
-#     "model": "cnn",
-#     "optimizer": "adam"
-# }
 
 conf_res = {
     "pre_kernel": 3,
@@ -199,12 +188,36 @@ conf_cnn = {
     "linear_layers": [197],
     "pool_each": 1,
     "dropout": None,
-    "batch_size": 75,
-    "lr": 4.733e-4,
-    "lr_max": 4.7e-3,
 }
 
-config = {"epochs": 100, "workers": 8, "model": "cnn", "optimizer": "sgd", "sched_cyclic": True}
+config = {
+    "epochs": 80,
+    "lr": 4e-3,
+    "batch_size": 512,
+    "optimizer": "adam",
+    "model": "cnn",
+    "workers": 2,
+    "sched": "StepLR",
+    "step_size": 10,
+    "gamma": 0.67,
+    "pin_memory": False,
+    "dataset_mem": "ram"
+}
+
+config_baseline = {
+    "epochs": 80,
+    "lr": 4.7331e-04,
+    "batch_size": 75,
+    "optimizer": "adam",
+    "model": "cnn",
+    "workers": 2,
+    "sched": None,
+    "pin_memory": False,
+    "dataset_mem": "ram",
+    "hvd_mode": "sum"
+}
+
+config = config_baseline
 
 if "res" in config["model"]:
     config = {**config, **conf_res}
@@ -217,14 +230,96 @@ if __name__ == "__main__":
     if a.lrf:
         from torch_lr_finder import LRFinder
         config["sched_cyclic"] = False
-        runnable = create_runnable(config, distributed.get_device(), a.data)
-        runner = create_runner(config, runnable, a.group, a.name, a.data)
+        runnable = create_runnable(config, distributed.get_device_hvd(), a.data)
+        runner = distributed.Runner(torch.device("cuda"))
+        # runner = create_runner(config, runnable, a.group, a.name, a.data)
 
         lr_finder = LRFinder(runnable.net, runnable.optimizer, nn.MSELoss(), device="cuda:0")
         lr_finder.range_test(runner.loaders[0], start_lr=1e-9, end_lr=100, smooth_f=0)
         lr_finder.plot()  # to inspect the loss-learning rate graph
         lr_finder.reset()  # to reset the model and optimizer to their initial state
+    elif a.dist:
+        print("running horovod version")
+        hvd.init()
+        np.random.seed(hvd.rank())
+        torch.manual_seed(hvd.rank())
+        random.seed(hvd.rank())
+
+        print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
+        device = distributed.get_device_hvd(a.single_gpu)
+        print(f"running hvd on rank {hvd.rank()}, device {device}")
+
+        if hvd.rank() == 0:
+            wandb.init(
+                project="hvd",
+                config={
+                    "horovod": distributed.horovod_meta(),
+                    "slurm": distributed.slurm_meta(),
+                    "run": config
+                },
+                group=a.group,
+                name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}" if a.name is None else a.name,
+                dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
+                settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
+
+        (model, optimizer, scheduler) = create_model(config)
+        model.to(device)
+        (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
+        (loader_train, loader_test) = distributed.create_loaders_hvd(dataset_train, dataset_test,
+                                                                     config["batch_size"],
+                                                                     config["batch_size"], config["workers"],
+                                                                     config["pin_memory"])
+
+        optimizer = hvd.DistributedOptimizer(optimizer,
+                                             named_parameters=model.named_parameters(),
+                                             op=hvd.Sum)
+        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+
+        runnable = StressRunnable(model, optimizer, loader_train, loader_test, device, y_max, y_min,
+                                  scheduler)
+
+        if hvd.rank() == 0:
+            wandb.watch(model, log_freq=100, log="all")
+
+        runner = distributed.Runner()
+        runner.runnable = runnable
+
+        def hook(p):
+            if hvd.rank() == 0: 
+                wandb.log(p)
+        
+        runner.epoch_hooks.append(hook)
+        runner.start_training(config["epochs"], hvd.allreduce)
     else:
-        runnable = create_runnable(config, distributed.get_device(), a.data)
-        runner = create_runner(config, runnable, a.group, a.name, a.data)
-        runner.start_training(config["epochs"])
+        with ExitStack() as stack:
+            if args.get_args().dlprof:
+                import nvidia_dlprof_pytorch_nvtx as nvtx
+                nvtx.init()
+
+            (model, optimizer, scheduler) = create_model(config)
+            (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
+            (loader_train, loader_test) = distributed.create_loaders(dataset_train, dataset_test,
+                                                                     config["batch_size"],
+                                                                     config["batch_size"], config["workers"],
+                                                                     config["pin_memory"])
+            runnable = StressRunnable(model, optimizer, loader_train, loader_test, torch.device("cuda"),
+                                      y_max, y_min, scheduler)
+
+            runner = distributed.Runner()
+            runner.runnable = runnable
+
+            if args.get_args().tprof:
+                s = schedule(wait=0, warmup=10, active=10)
+
+                def trace_handler(p):
+                    output = p.key_averages().table(sort_by="cpu_time_total", row_limit=30)
+                    print(output)
+
+                prof = stack.enter_context(
+                    profile(activities=[ProfilerActivity.CPU],
+                            record_shapes=True,
+                            schedule=s,
+                            on_trace_ready=trace_handler))
+
+            runner.start_training(config["epochs"])

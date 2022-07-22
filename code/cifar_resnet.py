@@ -53,13 +53,13 @@ def batch_accuracy_onehot(y, Y):
     return truth_map.sum() / len(truth_map)
 
 
-class CifarRunner(distributed.DistributedRunnable):
+class CifarRunner(distributed.Runnable):
 
     def __init__(self, net: torch.nn.Module, optimizer: torch.optim.Optimizer, datasets, meta) -> None:
         super().__init__(net, optimizer, datasets, meta)
         self.loss = nn.CrossEntropyLoss()
 
-    def train_epoch(self, loader, optimizer, device):
+    def train(self, loader, optimizer, device):
         accuracy = 0
         for i, (X, Y) in enumerate(loader):
             Y = Y.to(device)

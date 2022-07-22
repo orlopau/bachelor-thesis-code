@@ -76,17 +76,18 @@ for config in configs:
     sbatch = f"""\
 #!/bin/bash
 
-# alpha: 48 cores, 8 gpus, ~8GB per core
+# alpha: 48 cores, 8 gpus, ~8GB per core, 10312M -> 6 cores per gpu
+# gpu2: 24 cores, 4 gpus, ~2.5G per core, 2583M -> 6 cores per gpu
 
 #SBATCH --nodes={config["nodes"]}
 #SBATCH --ntasks-per-node={config["gpus"]}
-#SBATCH --cpus-per-task=4
-#SBATCH --mem-per-cpu=4G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem-per-cpu=2583M
 #SBATCH --gres="gpu:{config["gpus"]}"
-#SBATCH --time=2:00:00
-#___SBATCH --exclusive
-#SBATCH -p alpha
-#SBATCH --hint=multithread
+#SBATCH --time=4:00:00
+#SBATCH --exclusive
+#SBATCH -x taurusi2095
+#SBATCH -p gpu2
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
 #SBATCH -J runall
 {"" if args.nodelist is None else f"#SBATCH --nodelist {args.nodelist}"}
@@ -99,8 +100,8 @@ source $VENV/bin/activate
 mpirun -N {config["gpus"]} \\
     -bind-to none --oversubscribe \\
     -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH \\
-    -mca pml ob1 -mca btl ^openib \\
-    $VENV/bin/python -u {(target_path / script_name).resolve()} --data $WS_PATH/data --group {args.group} {"" if args.name is None else f"--name {args.name}"}
+    -mca pml ob1 -mca btl ^openib --mca btl_tcp_if_include ens1f0 \\
+    $VENV/bin/python -u {(target_path / script_name).resolve()} --data $WS_PATH/data --dist --group {args.group} {"" if args.name is None else f"--name {args.name}"}
     """
 
     print(f"running with {config}")

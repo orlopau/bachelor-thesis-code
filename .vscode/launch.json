@@ -11,6 +11,9 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
+            "env": {
+                "WANDB_MODE": "disabled"
+            }
         },
         {
             "name": "Alpha",
