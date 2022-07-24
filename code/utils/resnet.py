@@ -1,14 +1,4 @@
-import utils.distributed as distributed
-import torchvision
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import utils.cnn as cnn
-import horovod.torch as hvd
-from torch.utils.data import DataLoader, TensorDataset
-from torchvision import transforms
-from torchinfo import summary
 
 
 def activation_func(activation):

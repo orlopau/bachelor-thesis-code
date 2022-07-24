@@ -25,6 +25,7 @@ def get_args():
     parser.add_argument("--dlprof", action="store_true")
     parser.add_argument("--lrf", help="lr finder", action="store_true")
     parser.add_argument("--dist", action="store_true")
+    parser.add_argument("--cprof", action="store_true")
     args = parser.parse_args()
     return args
 

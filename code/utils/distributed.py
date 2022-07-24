@@ -25,7 +25,7 @@ def slurm_meta():
 
 
 def is_logger():
-    return hvd.is_initialized() and hvd.rank() == 0
+    return not hvd.is_initialized() or hvd.rank() == 0
 
 
 def get_device_hvd(single_gpu=False):

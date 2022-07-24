@@ -47,6 +47,7 @@ parser.add_argument("--group", help="group for wandb", required=True)
 parser.add_argument("--name", help="name for wandb")
 parser.add_argument("--nodelist", help="nodelist to use")
 parser.add_argument("--script", help="script")
+parser.add_argument("--timeline", help="set for horovod timeline", action="store_true")
 args = parser.parse_args()
 
 grid_args = copy.deepcopy(vars(args))
@@ -54,6 +55,7 @@ grid_args.pop("name")
 grid_args.pop("group")
 grid_args.pop("nodelist")
 grid_args.pop("script")
+grid_args.pop("timeline")
 
 grid_config = {k: v.split(",") for k, v in grid_args.items()}
 configs = grid_search(grid_config)
@@ -86,6 +88,7 @@ for config in configs:
 #SBATCH --gres="gpu:{config["gpus"]}"
 #SBATCH --time=4:00:00
 #SBATCH --exclusive
+#SBATCH --nice=200
 #SBATCH -x taurusi2095
 #SBATCH -p gpu2
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/sbatch_%j.log
@@ -99,7 +102,7 @@ source $VENV/bin/activate
 
 mpirun -N {config["gpus"]} \\
     -bind-to none --oversubscribe \\
-    -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH \\
+    -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH {"-x HOROVOD_TIMELINE=$WS_PATH/timeline.data" if args.timeline else ""}\\
     -mca pml ob1 -mca btl ^openib --mca btl_tcp_if_include ens1f0 \\
     $VENV/bin/python -u {(target_path / script_name).resolve()} --data $WS_PATH/data --dist --group {args.group} {"" if args.name is None else f"--name {args.name}"}
     """

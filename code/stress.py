@@ -12,6 +12,8 @@ import numpy as np
 from utils import resnet
 from utils import cnn
 from utils import args
+import cProfile
+import pstats
 
 if args.get_args().dist:
     import horovod.torch as hvd
@@ -205,7 +207,7 @@ config = {
 }
 
 config_baseline = {
-    "epochs": 80,
+    "epochs": 3,
     "lr": 4.7331e-04,
     "batch_size": 75,
     "optimizer": "adam",
@@ -227,75 +229,116 @@ else:
 if __name__ == "__main__":
     a = args.get_args()
 
-    if a.lrf:
-        from torch_lr_finder import LRFinder
-        config["sched_cyclic"] = False
-        runnable = create_runnable(config, distributed.get_device_hvd(), a.data)
-        runner = distributed.Runner(torch.device("cuda"))
-        # runner = create_runner(config, runnable, a.group, a.name, a.data)
+    with ExitStack() as stack:
+        if args.get_args().dlprof:
+            import nvidia_dlprof_pytorch_nvtx as nvtx
+            nvtx.init()
 
-        lr_finder = LRFinder(runnable.net, runnable.optimizer, nn.MSELoss(), device="cuda:0")
-        lr_finder.range_test(runner.loaders[0], start_lr=1e-9, end_lr=100, smooth_f=0)
-        lr_finder.plot()  # to inspect the loss-learning rate graph
-        lr_finder.reset()  # to reset the model and optimizer to their initial state
-    elif a.dist:
-        print("running horovod version")
-        hvd.init()
-        np.random.seed(hvd.rank())
-        torch.manual_seed(hvd.rank())
-        random.seed(hvd.rank())
+        prof = None
+        if args.get_args().tprof:
+            print("profiling...")
+            s = schedule(wait=20, warmup=10, active=30, repeat=1)
 
-        print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
-        device = distributed.get_device_hvd(a.single_gpu)
-        print(f"running hvd on rank {hvd.rank()}, device {device}")
+            def trace_handler(p):
+                output = p.key_averages().table(sort_by="cpu_time_total", row_limit=40)
+                print(output)
 
-        if hvd.rank() == 0:
-            wandb.init(
-                project="hvd",
-                config={
-                    "horovod": distributed.horovod_meta(),
-                    "slurm": distributed.slurm_meta(),
-                    "run": config
-                },
-                group=a.group,
-                name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}" if a.name is None else a.name,
-                dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
-                settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
+            prof = stack.enter_context(
+                profile(activities=[ProfilerActivity.CPU],
+                        record_shapes=False,
+                        schedule=s,
+                        on_trace_ready=trace_handler))
 
-        (model, optimizer, scheduler) = create_model(config)
-        model.to(device)
-        (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
-        (loader_train, loader_test) = distributed.create_loaders_hvd(dataset_train, dataset_test,
-                                                                     config["batch_size"],
-                                                                     config["batch_size"], config["workers"],
-                                                                     config["pin_memory"])
+        if a.lrf:
+            from torch_lr_finder import LRFinder
+            config["sched_cyclic"] = False
+            runnable = create_runnable(config, distributed.get_device_hvd(), a.data)
+            runner = distributed.Runner(torch.device("cuda"))
+            # runner = create_runner(config, runnable, a.group, a.name, a.data)
 
-        optimizer = hvd.DistributedOptimizer(optimizer,
-                                             named_parameters=model.named_parameters(),
-                                             op=hvd.Sum)
-        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-        hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+            lr_finder = LRFinder(runnable.net, runnable.optimizer, nn.MSELoss(), device="cuda:0")
+            lr_finder.range_test(runner.loaders[0], start_lr=1e-9, end_lr=100, smooth_f=0)
+            lr_finder.plot()  # to inspect the loss-learning rate graph
+            lr_finder.reset()  # to reset the model and optimizer to their initial state
+        elif a.dist:
+            print("running horovod version")
+            hvd.init()
+            np.random.seed(hvd.rank())
+            torch.manual_seed(hvd.rank())
+            random.seed(hvd.rank())
 
-        runnable = StressRunnable(model, optimizer, loader_train, loader_test, device, y_max, y_min,
-                                  scheduler)
+            torch.cuda.set_device(hvd.local_rank())
 
-        if hvd.rank() == 0:
-            wandb.watch(model, log_freq=100, log="all")
+            print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
+            device = distributed.get_device_hvd(a.single_gpu)
+            print(f"running hvd on rank {hvd.rank()}, device {device}")
 
-        runner = distributed.Runner()
-        runner.runnable = runnable
+            if hvd.rank() == 0:
+                wandb.init(project="hvd",
+                           config={
+                               "horovod": distributed.horovod_meta(),
+                               "slurm": distributed.slurm_meta(),
+                               "run": config
+                           },
+                           group=a.group,
+                           name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}"
+                           if a.name is None else a.name,
+                           dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
+                           settings=wandb.Settings(_stats_sample_rate_seconds=0.5,
+                                                   _stats_samples_to_average=2))
 
-        def hook(p):
-            if hvd.rank() == 0: 
-                wandb.log(p)
-        
-        runner.epoch_hooks.append(hook)
-        runner.start_training(config["epochs"], hvd.allreduce)
-    else:
-        with ExitStack() as stack:
-            if args.get_args().dlprof:
-                import nvidia_dlprof_pytorch_nvtx as nvtx
-                nvtx.init()
+            (model, optimizer, scheduler) = create_model(config)
+            model.to(device)
+            print("created model...")
+            (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
+            (loader_train,
+             loader_test) = distributed.create_loaders_hvd(dataset_train, dataset_test, config["batch_size"],
+                                                           config["batch_size"], config["workers"],
+                                                           config["pin_memory"])
+
+            optimizer = hvd.DistributedOptimizer(optimizer,
+                                                 named_parameters=model.named_parameters(),
+                                                 op=hvd.Sum)
+            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+            hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+
+            runnable = StressRunnable(model, optimizer, loader_train, loader_test, device, y_max, y_min,
+                                      scheduler)
+
+            if hvd.rank() == 0:
+                wandb.watch(model, log_freq=100, log="all")
+
+            runner = distributed.Runner()
+            runner.runnable = runnable
+
+            def hook(p):
+                if hvd.rank() == 0:
+                    wandb.log(p)
+
+            runner.epoch_hooks.append(hook)
+
+            if a.cprof:
+                p = cProfile.Profile()
+                def p_hook(r):
+                    if r["epoch"] == 3:
+                        p.enable()
+                    if r["epoch"] == 4:
+                        p.disable()
+                        stats = pstats.Stats(p).strip_dirs().sort_stats("cumtime")
+                        stats.print_stats(75)
+                runner.epoch_hooks.append(p_hook)
+
+            runner.start_training(config["epochs"], hvd.allreduce)
+        else:
+            wandb.init(project="hvd",
+                       config={
+                           "slurm": distributed.slurm_meta(),
+                           "run": config
+                       },
+                       group=a.group,
+                       name=f"local_run" if a.name is None else a.name,
+                       dir="/tmp/s8979104",
+                       settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
 
             (model, optimizer, scheduler) = create_model(config)
             (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
@@ -309,17 +352,5 @@ if __name__ == "__main__":
             runner = distributed.Runner()
             runner.runnable = runnable
 
-            if args.get_args().tprof:
-                s = schedule(wait=0, warmup=10, active=10)
-
-                def trace_handler(p):
-                    output = p.key_averages().table(sort_by="cpu_time_total", row_limit=30)
-                    print(output)
-
-                prof = stack.enter_context(
-                    profile(activities=[ProfilerActivity.CPU],
-                            record_shapes=True,
-                            schedule=s,
-                            on_trace_ready=trace_handler))
-
+            runner.epoch_hooks.append(lambda p: wandb.log(p))
             runner.start_training(config["epochs"])
