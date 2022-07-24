@@ -3,6 +3,7 @@
 from contextlib import ExitStack
 import platform
 import random
+from re import A
 import wandb
 import utils.distributed as distributed
 import torch
@@ -230,9 +231,9 @@ if __name__ == "__main__":
     a = args.get_args()
 
     with ExitStack() as stack:
-        if args.get_args().dlprof:
+        if a.dlprof:
             import nvidia_dlprof_pytorch_nvtx as nvtx
-            nvtx.init()
+            nvtx.init(delay_graph_capture=True)
 
         prof = None
         if args.get_args().tprof:
@@ -351,6 +352,16 @@ if __name__ == "__main__":
 
             runner = distributed.Runner()
             runner.runnable = runnable
+
+            if a.dlprof:
+                def p_hook(r):
+                    if r["epoch"] == 1:
+                        print("starting dlprof graph...")
+                        nvtx.start_graph()
+                    if r["epoch"] == 2:
+                        nvtx.stop_graph()
+                runner.epoch_hooks.append(p_hook)
+
 
             runner.epoch_hooks.append(lambda p: wandb.log(p))
             runner.start_training(config["epochs"])

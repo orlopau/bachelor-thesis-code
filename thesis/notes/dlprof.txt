@@ -1,0 +1,30 @@
+Processing events...
+Saving temporary "/tmp/nsys-report-59dd-d88a-5ed0-2e7a.qdstrm" file to disk...
+
+Creating final output files...
+Processing [===============================================================100%]
+
+**** Analysis failed with:
+Status: TargetProfilingFailed
+Props {
+  Items {
+    Type: DeviceId
+    Value: "Local (CLI)"
+  }
+}
+Error {
+  Type: RuntimeError
+  SubError {
+    Type: ProcessEventsError
+    Props {
+      Items {
+        Type: ErrorText
+        Value: "/build/agent/work/20a3cfcd1c25021d/QuadD/Host/Analysis/EventHandler/PerfEventHandler.cpp(501): Throw in function void QuadDAnalysis::EventHandler::PerfEventHandler::PutCpuEvent(QuadDCommon::CpuId, QuadDAnalysis::EventHandler::PerfEventHandler::EventPtr)\nDynamic exception type: boost::exception_detail::clone_impl<QuadDAnalysis::ChronologicalOrderError>\nstd::exception::what: ChronologicalOrderError\n[QuadDCommon::tag_message*] = Cpu event chronological order was broken.\n"
+      }
+    }
+  }
+}
+
+
+**** Errors occurred while processing the raw events. ****
+**** Please see the Diagnostics Summary page after opening the qdrep file in GUI. ****
