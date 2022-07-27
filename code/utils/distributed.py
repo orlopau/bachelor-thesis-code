@@ -1,4 +1,3 @@
-from torchinfo import summary
 import torch
 from torch.utils.data import DataLoader
 import horovod.torch as hvd
@@ -57,8 +56,6 @@ def create_loaders(dataset_train,
                              drop_last=False,
                              num_workers=workers,
                              sampler=sampler_test)
-
-    loader_train.sampler
 
     print(f"created loaders with batch sizes: {batch_size_train} train; {batch_size_test} test")
     return (loader_train, loader_test)

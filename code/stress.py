@@ -3,7 +3,7 @@
 from contextlib import ExitStack
 import platform
 import random
-from re import A
+import time
 import wandb
 import utils.distributed as distributed
 import torch
@@ -65,9 +65,12 @@ class StressRunnable(distributed.Runnable):
 
         self.optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
 
-        return loss.float()
+        step_start = time.time()
+        self.optimizer.step()
+        step_time = time.time() - step_start
+
+        return (loss.float(), step_time)
 
     def train(self):
         with ExitStack() as stack:
@@ -77,21 +80,27 @@ class StressRunnable(distributed.Runnable):
                 stack.enter_context(torch.autograd.profiler.emit_nvtx())
 
             accuracy = 0
+            sum_step_time = 0
             for X, Y in self.loader_train:
-                accuracy += self.train_batch(X.to(self.device), Y.to(self.device))
+                (loss, step_time) = self.train_batch(X.to(self.device), Y.to(self.device))
+                accuracy += loss
+                sum_step_time += step_time
                 if args.get_args().tprof:
                     prof.step()
 
             mean_acc = float(accuracy / len(self.loader_train))
-
-            res = {"acc_train": mean_acc}
+            res = {
+                "acc_train": mean_acc,
+                "time_step": sum_step_time,
+                "time_step_avg": sum_step_time / len(self.loader_train)
+            }
 
             if self.scheduler is not None:
                 self.scheduler.step()
                 res["sched_lr"] = self.optimizer.param_groups[0]['lr']
 
             if distributed.is_logger():
-                print(f"TRAIN: Acc={mean_acc:.6f}")
+                print(f"TRAIN: Acc={mean_acc:.6f}, StepTime={sum_step_time:.6f}")
 
             return res
 
@@ -194,33 +203,21 @@ conf_cnn = {
 }
 
 config = {
-    "epochs": 80,
-    "lr": 4e-3,
-    "batch_size": 512,
-    "optimizer": "adam",
-    "model": "cnn",
-    "workers": 2,
-    "sched": "StepLR",
-    "step_size": 10,
-    "gamma": 0.67,
-    "pin_memory": False,
-    "dataset_mem": "ram"
-}
-
-config_baseline = {
-    "epochs": 3,
+    "epochs": 10,
     "lr": 4.7331e-04,
     "batch_size": 75,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
     "sched": None,
-    "pin_memory": False,
+    "pin_memory": True,
     "dataset_mem": "ram",
-    "hvd_mode": "sum"
+    "hvd_mode": "sum",
+    "cnn_channels": [15, 38],
+    "linear_layers": [197],
+    "pool_each": 1,
+    "dropout": None,
 }
-
-config = config_baseline
 
 if "res" in config["model"]:
     config = {**config, **conf_res}
@@ -268,14 +265,14 @@ if __name__ == "__main__":
             torch.manual_seed(hvd.rank())
             random.seed(hvd.rank())
 
-            torch.cuda.set_device(hvd.local_rank())
-
             print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
+
+            torch.cuda.set_device(hvd.local_rank())
             device = distributed.get_device_hvd(a.single_gpu)
             print(f"running hvd on rank {hvd.rank()}, device {device}")
 
             if hvd.rank() == 0:
-                wandb.init(project="hvd",
+                wandb.init(project=a.project,
                            config={
                                "horovod": distributed.horovod_meta(),
                                "slurm": distributed.slurm_meta(),
@@ -320,6 +317,7 @@ if __name__ == "__main__":
 
             if a.cprof:
                 p = cProfile.Profile()
+
                 def p_hook(r):
                     if r["epoch"] == 3:
                         p.enable()
@@ -327,16 +325,20 @@ if __name__ == "__main__":
                         p.disable()
                         stats = pstats.Stats(p).strip_dirs().sort_stats("cumtime")
                         stats.print_stats(75)
+
                 runner.epoch_hooks.append(p_hook)
 
-            runner.start_training(config["epochs"], hvd.allreduce)
+            with ExitStack() as stack:
+                if a.scorep:
+                    import scorep
+                    stack.enter_context(scorep.instrumenter.enable())
+                runner.start_training(config["epochs"], hvd.allreduce)
         else:
-            wandb.init(project="hvd",
+            wandb.init(project=a.project,
                        config={
                            "slurm": distributed.slurm_meta(),
                            "run": config
                        },
-                       group=a.group,
                        name=f"local_run" if a.name is None else a.name,
                        dir="/tmp/s8979104",
                        settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
@@ -354,14 +356,15 @@ if __name__ == "__main__":
             runner.runnable = runnable
 
             if a.dlprof:
+
                 def p_hook(r):
                     if r["epoch"] == 1:
                         print("starting dlprof graph...")
                         nvtx.start_graph()
                     if r["epoch"] == 2:
                         nvtx.stop_graph()
-                runner.epoch_hooks.append(p_hook)
 
+                runner.epoch_hooks.append(p_hook)
 
             runner.epoch_hooks.append(lambda p: wandb.log(p))
             runner.start_training(config["epochs"])

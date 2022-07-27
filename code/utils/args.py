@@ -20,12 +20,14 @@ def get_args():
                         help="specify if only a single gpu but multiple horovod processes should be used",
                         action="store_true")
     parser.add_argument("--group", help="group", default="run_group")
+    parser.add_argument("--project", help="project", default="test")
     parser.add_argument("--name", help="name")
     parser.add_argument("--tprof", action="store_true")
     parser.add_argument("--dlprof", action="store_true")
     parser.add_argument("--lrf", help="lr finder", action="store_true")
     parser.add_argument("--dist", action="store_true")
     parser.add_argument("--cprof", action="store_true")
+    parser.add_argument("--scorep", action="store_true")
     args = parser.parse_args()
     return args
 

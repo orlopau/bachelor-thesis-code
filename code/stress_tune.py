@@ -4,7 +4,6 @@ from utils import distributed
 from utils import args
 import ray
 from ray import tune
-from ray.tune.utils import wait_for_gpu
 from ray.tune.schedulers import ASHAScheduler
 from ray.tune.integration.wandb import (
     WandbTrainableMixin,
@@ -38,21 +37,12 @@ def train(config):
 
 
 ss = {
-    "epochs": 120,
-    "lr": 2e-3,
-    "batch_size": 500,
-    "optimizer": "adam",
-    "model": "cnn",
-    "workers": 4,
-    "sched": "StepLR",
-    "step_size": 10,
-    "gamma": 0.67,
-    "log_sys_usage": True,
+    "batch_size": tune.grid_search([x*50 for x in range(1, 20)]),
     "wandb": {
-        "project": "stress_tune",
+        "project": "hpdlf",
         "settings": wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2),
         "dir": "/lustre/ssd/ws/s8979104-horovod/data/wandb",
-        "group": "sched_step"
+        "group": "bs_speedup",
     },
 }
 
@@ -71,10 +61,10 @@ analysis = tune.run(
     train,
     config=ss,
     resources_per_trial={
-        "cpu": 4,
+        "cpu": 6,
         "gpu": 1
     },
-    num_samples=8,
+    num_samples=1,
     # scheduler=ASHAScheduler(max_t=80, grace_period=30),
     progress_reporter=reporter,
     metric="acc_test",

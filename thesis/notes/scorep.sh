@@ -1,0 +1,1 @@
+mpirun -N 2 -bind-to none -map-by slot -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH -x NCCL_P2P_DISABLE=1 -x NCCL_IB_DISABLE=1 -mca btl_tcp_if_include ens1f0 -mca pml ob1 -mca btl ^openib bash -c 'export SCOREP_EXPERIMENT_DIRECTORY=hvd_mpi_$(date +%FT%H:%M)_$RANDOM; ../venv_hvd_mpi/bin/python -m scorep --noinstrumenter ../sync/code/stress.py --data ../data --dist --scorep'
