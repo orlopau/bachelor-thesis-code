@@ -78,10 +78,10 @@ def reduce_run(run):
     }
 
     if "gpu" in summary:
-        entry["gpu_power"] = history_metrics[f"system.gpu.{summary['gpu']}.powerPercent"].mean()
-        entry["gpu_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.gpu"].mean()
-        entry["gpu_mem"] = history_metrics[f"system.gpu.{summary['gpu']}.memoryAllocated"].mean()
-        entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.memory"].mean()
+        entry["gpu_power"] = history_metrics[f"system.gpu.{summary['gpu']}.powerPercent"].median()
+        entry["gpu_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.gpu"].median()
+        entry["gpu_mem"] = history_metrics[f"system.gpu.{summary['gpu']}.memoryAllocated"].median()
+        entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.memory"].median()
     
     return entry
 

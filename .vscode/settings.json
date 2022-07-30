@@ -4,8 +4,5 @@
     "python.formatting.yapfArgs": [
         "--style={based_on_style: google, indent_width: 4, column_limit: 109}"
     ],
-    "python.analysis.extraPaths": [
-        "/home/paul/dev/bache"
-    ],
-    "austin.mode": "CPU time"
+    "austin.mode": "CPU time",
 }

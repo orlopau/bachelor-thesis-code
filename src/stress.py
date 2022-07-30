@@ -277,7 +277,7 @@ if __name__ == "__main__":
                                "run": config
                            },
                            group=a.group,
-                           name=f"N:{int(hvd.size() / hvd.local_size())} G:{hvd.size()}"
+                           name=f"N:{distributed.slurm_meta()['SLURM_JOB_NUM_NODES']} G:{hvd.size()}"
                            if a.name is None else a.name,
                            dir="/lustre/ssd/ws/s8979104-horovod/data/wandb",
                            settings=wandb.Settings(_stats_sample_rate_seconds=0.5,
