@@ -16,13 +16,6 @@ from utils import args
 import cProfile
 import pstats
 
-if args.get_args().dist:
-    import horovod.torch as hvd
-
-if args.get_args().tprof:
-    from torch.profiler import profile, record_function, ProfilerActivity, schedule
-
-
 def create_datasets(path):
     print(f"importing data from {path}")
 
@@ -37,7 +30,7 @@ def create_datasets(path):
             torch.from_numpy(X_test).float(),
             torch.from_numpy(Y_test).float())
         print(f"created datasets; train={len(dataset_train)}, test={len(dataset_test)}")
-
+        
         return (dataset_train, dataset_test, meta["y_max"], meta["y_min"])
 
 
@@ -51,12 +44,15 @@ class StressRunnable(distributed.Runnable):
                  device,
                  y_max=0,
                  y_min=0,
-                 scheduler=None) -> None:
+                 scheduler=None,
+                 tprof=False,
+                 dlprof=False) -> None:
         super().__init__(net, optimizer, loader_train, loader_test, device)
         self.loss = nn.MSELoss()
         self.y_max = y_max
         self.y_min = y_min
         self.scheduler = scheduler
+        self.tprof, self.dlprof = tprof, dlprof
 
     def train_batch(self, X, Y):
         y = self.net(X)
@@ -74,9 +70,9 @@ class StressRunnable(distributed.Runnable):
 
     def train(self):
         with ExitStack() as stack:
-            if args.get_args().tprof:
+            if self.tprof:
                 stack.enter_context(record_function("model_train"))
-            if args.get_args().dlprof:
+            if self.dlprof:
                 stack.enter_context(torch.autograd.profiler.emit_nvtx())
 
             accuracy = 0
@@ -85,7 +81,7 @@ class StressRunnable(distributed.Runnable):
                 (loss, step_time) = self.train_batch(X.to(self.device), Y.to(self.device))
                 accuracy += loss
                 sum_step_time += step_time
-                if args.get_args().tprof:
+                if self.tprof:
                     prof.step()
 
             mean_acc = float(accuracy / len(self.loader_train))
@@ -107,7 +103,7 @@ class StressRunnable(distributed.Runnable):
     def test(self, mean_reduce=lambda x: x):
         with ExitStack() as stack:
             stack.enter_context(torch.no_grad())
-            if args.get_args().tprof:
+            if self.tprof:
                 stack.enter_context(record_function("model_test"))
 
             self.net.eval()
@@ -233,7 +229,8 @@ if __name__ == "__main__":
             nvtx.init(delay_graph_capture=True)
 
         prof = None
-        if args.get_args().tprof:
+        if a.tprof:
+            from torch.profiler import profile, record_function, ProfilerActivity, schedule
             print("profiling...")
             s = schedule(wait=20, warmup=10, active=30, repeat=1)
 
@@ -259,6 +256,7 @@ if __name__ == "__main__":
             lr_finder.plot()  # to inspect the loss-learning rate graph
             lr_finder.reset()  # to reset the model and optimizer to their initial state
         elif a.dist:
+            import horovod.torch as hvd
             print("running horovod version")
             hvd.init()
             np.random.seed(hvd.rank())

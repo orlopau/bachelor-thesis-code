@@ -1,4 +1,3 @@
-import math
 import stress
 from utils import distributed
 from utils import args
@@ -12,6 +11,7 @@ from ray.tune.integration.wandb import (
 import torch
 import wandb
 import os
+import numpy as np
 
 data_dir = args.get_args().data
 
@@ -21,28 +21,37 @@ def train(config):
     print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
 
     # merge configs and create runnable
-    c = {**stress.config, **config}
+    c = config["run"]
     device = torch.device(f"cuda")
-    runnable = stress.create_runnable(c, device, data_dir)
 
-    runner = distributed.Runner(device, data_dir)
-    runner.set_runnable(runnable, batch_size=c["batch_size"], workers=c["workers"])
+    (model, optimizer, scheduler) = stress.create_model(c)
+    (dataset_train, dataset_test, y_max, y_min) = stress.create_datasets(data_dir)
+    (loader_train, loader_test) = distributed.create_loaders(dataset_train, dataset_test, c["batch_size"],
+                                                             c["batch_size"], c["workers"], c["pin_memory"])
+    runnable = stress.StressRunnable(model, optimizer, loader_train, loader_test, device, y_max, y_min,
+                                     scheduler)
+    runner = distributed.Runner()
+    runner.runnable = runnable
 
     def hook(res):
         tune.report(acc_test=res["acc_test"], acc_train=res["acc_train"])
-        wandb.log(res)
+        wandb.log({**res, "gpu": os.environ["CUDA_VISIBLE_DEVICES"]})
 
     runner.epoch_hooks.append(hook)
-    runner.start_training(config["epochs"])
+    runner.start_training(c["epochs"])
 
 
 ss = {
-    "batch_size": tune.grid_search([x*50 for x in range(1, 20)]),
+    "run": {
+        **stress.config,
+        "batch_size": tune.grid_search(np.geomspace(75, 5000, num=25, dtype=int).tolist()),
+    },
+    "slurm": distributed.slurm_meta(),
     "wandb": {
-        "project": "hpdlf",
+        "project": args.get_args().project,
         "settings": wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2),
         "dir": "/lustre/ssd/ws/s8979104-horovod/data/wandb",
-        "group": "bs_speedup",
+        "group": "batch_speed_perf",
     },
 }
 
@@ -61,8 +70,8 @@ analysis = tune.run(
     train,
     config=ss,
     resources_per_trial={
-        "cpu": 6,
-        "gpu": 1
+        "cpu": int(distributed.slurm_meta()["SLURM_CPUS_PER_TASK"]) / len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")),
+        "gpu": 1,
     },
     num_samples=1,
     # scheduler=ASHAScheduler(max_t=80, grace_period=30),

@@ -50,7 +50,7 @@ def cleanup():
     print(bcolors.HEADER + "cleaning up all steps")
     # dont kill *.extern step (usually the ssh session when interactive) and *.batch step (batch host job)
     step_ids = list(filter(lambda s: 'extern' not in s and 'batch' not in s,
-                           subprocess_output_list("squeue --me -s -h -o %i")))
+                           subprocess_output_list(f"squeue --me -s -h -o %i -j {os.environ['SLURM_JOB_ID']}")))
     print(f"killing jobs: {step_ids}")
     if len(step_ids) > 0:
         print(subprocess_output(f"scancel {' '.join(step_ids)}"))
