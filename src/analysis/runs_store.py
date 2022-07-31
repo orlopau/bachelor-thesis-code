@@ -77,11 +77,14 @@ def reduce_run(run):
         **history[min_metrics].add_suffix("_min").min().to_dict()
     }
 
+    gpu_index = 0
     if "gpu" in summary:
-        entry["gpu_power"] = history_metrics[f"system.gpu.{summary['gpu']}.powerPercent"].median()
-        entry["gpu_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.gpu"].median()
-        entry["gpu_mem"] = history_metrics[f"system.gpu.{summary['gpu']}.memoryAllocated"].median()
-        entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{summary['gpu']}.memory"].median()
+        gpu_index = summary["gpu"]
+
+    entry["gpu_power"] = history_metrics[f"system.gpu.{gpu_index}.powerPercent"].median()
+    entry["gpu_usage"] = history_metrics[f"system.gpu.{gpu_index}.gpu"].median()
+    entry["gpu_mem"] = history_metrics[f"system.gpu.{gpu_index}.memoryAllocated"].median()
+    entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{gpu_index}.memory"].median()
     
     return entry
 
