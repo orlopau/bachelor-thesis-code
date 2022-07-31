@@ -26,7 +26,7 @@ partitions = {
                         2583,
                         args={
                             "nccl": "-x NCCL_P2P_DISABLE=1 --mca btl_tcp_if_include ens1f0",
-                            "mpi": "--mca btl_tcp_if_include ib0,ib1"
+                            "mpi": "--mca btl_tcp_if_include ens1f0"
                         }),
     "hpdlf":
         _PartitonConfig(6,
