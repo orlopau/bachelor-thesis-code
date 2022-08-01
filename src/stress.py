@@ -16,6 +16,7 @@ from utils import args
 import cProfile
 import pstats
 
+
 def create_datasets(path):
     print(f"importing data from {path}")
 
@@ -30,7 +31,7 @@ def create_datasets(path):
             torch.from_numpy(X_test).float(),
             torch.from_numpy(Y_test).float())
         print(f"created datasets; train={len(dataset_train)}, test={len(dataset_test)}")
-        
+
         return (dataset_train, dataset_test, meta["y_max"], meta["y_min"])
 
 
@@ -199,9 +200,9 @@ conf_cnn = {
 }
 
 config = {
-    "epochs": 10,
+    "epochs": 70,
     "lr": 4.7331e-04,
-    "batch_size": 75,
+    "batch_size": 700,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
@@ -294,7 +295,7 @@ if __name__ == "__main__":
 
             optimizer = hvd.DistributedOptimizer(optimizer,
                                                  named_parameters=model.named_parameters(),
-                                                 op=hvd.Sum)
+                                                 op=hvd.Average)
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
@@ -366,3 +367,17 @@ if __name__ == "__main__":
 
             runner.epoch_hooks.append(lambda p: wandb.log(p))
             runner.start_training(config["epochs"])
+
+        if a.onnx:
+            import torchinfo
+            torchinfo.summary(model, (75, 3, 201))
+
+            print("exporting onnx...")
+            torch.onnx.export(
+                model.cpu(),
+                torch.randn(75, 3, 201),
+                "model.onnx",
+                export_params=True,
+                input_names=['input'],
+                output_names=['output'],
+            )

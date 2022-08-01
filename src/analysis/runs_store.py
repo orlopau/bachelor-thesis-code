@@ -4,7 +4,7 @@ import sys
 import wandb
 import pandas as pd
 
-api = wandb.Api(timeout=30)
+api = wandb.Api(timeout=300)
 max_samples = 999999
 
 
@@ -53,6 +53,30 @@ def load_runs(path):
         return pickle.load(f)
 
 
+def run_to_reduced_dict(run):
+    config = run["config"]
+    summary = run["summary"]
+    history = run["history"]
+    history_metrics = run["history_metrics"]
+
+    return {
+        "epoch":
+            summary["epoch"],
+        "nodes":
+            int(config["slurm"]["SLURM_NNODES"]) if "slurm" in config else 1,
+        "gpus":
+            config["horovod"]["size"] // int(config["slurm"]["SLURM_NNODES"]) if "horovod" in config else 1,
+        "size":
+            config["horovod"]["size"] if "horovod" in config else 1,
+        "batch_size":
+            config["run"]["batch_size"] if "run" in config else config["batch_size"],
+        "history":
+            history,
+        "history_metrics":
+            history_metrics
+    }
+
+
 def reduce_run(run):
     config = run["config"]
     summary = run["summary"]
@@ -73,19 +97,19 @@ def reduce_run(run):
             config["horovod"]["size"] if "horovod" in config else 1,
         "batch_size":
             config["run"]["batch_size"] if "run" in config else config["batch_size"],
-        **history[mean_metrics].add_suffix("_med").median().to_dict(),
-        **history[min_metrics].add_suffix("_min").min().to_dict()
+        **history[mean_metrics][2:].add_suffix("_med").mean().to_dict(),
+        **history[min_metrics][2:].add_suffix("_min").min().to_dict()
     }
 
     gpu_index = 0
     if "gpu" in summary:
         gpu_index = summary["gpu"]
 
-    entry["gpu_power"] = history_metrics[f"system.gpu.{gpu_index}.powerPercent"].median()
-    entry["gpu_usage"] = history_metrics[f"system.gpu.{gpu_index}.gpu"].median()
-    entry["gpu_mem"] = history_metrics[f"system.gpu.{gpu_index}.memoryAllocated"].median()
-    entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{gpu_index}.memory"].median()
-    
+    entry["gpu_power"] = history_metrics[f"system.gpu.{gpu_index}.powerPercent"].max()
+    entry["gpu_usage"] = history_metrics[f"system.gpu.{gpu_index}.gpu"].max()
+    entry["gpu_mem"] = history_metrics[f"system.gpu.{gpu_index}.memoryAllocated"].max()
+    entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{gpu_index}.memory"].max()
+
     return entry
 
 

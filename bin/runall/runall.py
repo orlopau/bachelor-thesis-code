@@ -142,6 +142,7 @@ def run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--partition", help="partition", required=True)
     parser.add_argument("--gpus", help="gpus as list", default="1")
+    parser.add_argument("--tasks", help="tasks to run", default="1")
     parser.add_argument("--nodes", help="nodes as list", default="1")
     parser.add_argument("--mode", help="mode, nccl or mpi", default="nccl")
     parser.add_argument("--group", help="group for wandb", required=True)
@@ -150,6 +151,7 @@ def run():
     parser.add_argument("--script", help="script")
     parser.add_argument("--timeline", help="set for horovod timeline", action="store_true")
     parser.add_argument("--sequential", help="set for sequential", action="store_true")
+    parser.add_argument("--single", help="set for single", action="store_true")
     args = parser.parse_args()
 
     grid_args = copy.deepcopy(vars(args))
@@ -159,11 +161,17 @@ def run():
     grid_args.pop("script")
     grid_args.pop("timeline")
     grid_args.pop("sequential")
+    grid_args.pop("single")
+    grid_args.pop("tasks")
 
     grid_config = {k: v.split(",") for k, v in grid_args.items()}
 
     if args.sequential:
         configs = list(sequential(grid_config))
+    elif args.single:
+        config = list(sequential(grid_config))[-1]
+        config["tasks"] = args.tasks
+        configs = [config]
     else:
         configs = grid_search(grid_config)
         for c in configs:
