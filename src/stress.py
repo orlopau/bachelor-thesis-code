@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from contextlib import ExitStack
+import math
 import platform
 import random
 import time
@@ -200,9 +201,14 @@ conf_cnn = {
 }
 
 config = {
-    "epochs": 70,
+    # "epochs": 999999,
+    # "max_time": 30 * 60,
+    # "lr": 4.7331e-04*math.sqrt(10),
+    # "batch_size": 75*10,
+    "epochs": 10,
+    "max_time": None,
     "lr": 4.7331e-04,
-    "batch_size": 700,
+    "batch_size": 75,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
@@ -270,6 +276,8 @@ if __name__ == "__main__":
             device = distributed.get_device_hvd(a.single_gpu)
             print(f"running hvd on rank {hvd.rank()}, device {device}")
 
+            config["lr"] *= math.sqrt(hvd.size())
+
             if hvd.rank() == 0:
                 wandb.init(project=a.project,
                            config={
@@ -331,7 +339,7 @@ if __name__ == "__main__":
                 if a.scorep:
                     import scorep
                     stack.enter_context(scorep.instrumenter.enable())
-                runner.start_training(config["epochs"], hvd.allreduce)
+                runner.start_training(config["epochs"], hvd.allreduce, config["max_time"])
         else:
             wandb.init(project=a.project,
                        config={

@@ -59,6 +59,9 @@ def run_to_reduced_dict(run):
     history = run["history"]
     history_metrics = run["history_metrics"]
 
+    history_metrics_start = int(summary["_runtime"] - summary["time"]) + 5
+    history_metrics = history_metrics.iloc[history_metrics_start:-5]
+
     return {
         "epoch":
             summary["epoch"],
@@ -105,10 +108,12 @@ def reduce_run(run):
     if "gpu" in summary:
         gpu_index = summary["gpu"]
 
-    entry["gpu_power"] = history_metrics[f"system.gpu.{gpu_index}.powerPercent"].max()
-    entry["gpu_usage"] = history_metrics[f"system.gpu.{gpu_index}.gpu"].max()
-    entry["gpu_mem"] = history_metrics[f"system.gpu.{gpu_index}.memoryAllocated"].max()
-    entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{gpu_index}.memory"].max()
+    history_metrics_start = int(summary["_runtime"] - summary["time"]) + 5
+    history_metrics = history_metrics.iloc[history_metrics_start:-5]
+    entry["gpu_power"] = history_metrics[f"system.gpu.{gpu_index}.powerPercent"].mean()
+    entry["gpu_usage"] = history_metrics[f"system.gpu.{gpu_index}.gpu"].mean()
+    entry["gpu_mem"] = history_metrics[f"system.gpu.{gpu_index}.memoryAllocated"].mean()
+    entry["gpu_mem_usage"] = history_metrics[f"system.gpu.{gpu_index}.memory"].mean()
 
     return entry
 

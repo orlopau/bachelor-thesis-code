@@ -63,11 +63,12 @@ def gen_sbatch(config):
 #SBATCH --cpus-per-task={p.cpus_per_task}
 #SBATCH --mem=0
 #SBATCH --gres="gpu:{config["gpus"]}"
-#SBATCH --time=4:00:00
+#SBATCH --time=2:00:00
 #SBATCH --exclusive=user
 #SBATCH -p {config["partition"]}
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/{config["partition"]}/sbatch_%j.log
 #SBATCH -J runall_{config["partition"]}_{config["mode"]}
+#SBATCH -x taurusi[2095-2100]
 {"" if config["nodelist"] is None else f"#SBATCH --nodelist {config['nodelist']}"}
 
 ml restore {p.module}

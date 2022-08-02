@@ -118,7 +118,7 @@ class Runner():
     def set_runnable(self, runnable: Runnable):
         self.runnable = runnable
 
-    def start_training(self, epochs, mean_reduce=lambda x: x):
+    def start_training(self, epochs, mean_reduce=lambda x: x, max_time=None):
         r = self.runnable
 
         self.start = time.time()
@@ -154,6 +154,10 @@ class Runner():
 
             for hook in self.epoch_hooks:
                 hook(point)
+
+            if max_time is not None and time.time() - self.start >= max_time:
+                print("max time reached, stopping training")
+                break
 
 
 class DistributedHvdRunner(Runner):
