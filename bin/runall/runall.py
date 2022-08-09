@@ -21,21 +21,23 @@ class _PartitonConfig:
 
 partitions = {
     "gpu2":
-        _PartitonConfig(6,
-                        4,
-                        2583,
-                        args={
-                            "nccl": "-x NCCL_P2P_DISABLE=1 --mca btl_tcp_if_include ens1f0",
-                            "mpi": "--mca btl_tcp_if_include ens1f0"
-                        }),
+        _PartitonConfig(
+            6,
+            4,
+            2583,
+            args={
+                "nccl": "export NCCL_P2P_DISABLE=1",
+                # "mpi": "--mca btl_tcp_if_include ens1f0"
+            }),
     "hpdlf":
-        _PartitonConfig(6,
-                        3,
-                        7916,
-                        args={
-                            "nccl": "--mca btl_tcp_if_include ib0,ib1",
-                            "mpi": "--mca btl_tcp_if_include ib0,ib1"
-                        }),
+        _PartitonConfig(
+            4,
+            3,
+            7916,
+            args={
+                # "nccl": "--mca btl_tcp_if_include ib0,ib1",
+                # "mpi": "--mca btl_tcp_if_include ib0,ib1"
+            }),
     "alpha":
         _PartitonConfig(6,
                         8,
@@ -59,16 +61,17 @@ def gen_sbatch(config):
 # hpdlf: 12 cores, 3 gpus, 7916M per core, 3 gpus, 4 cores per GPU
 
 #SBATCH --nodes={config["nodes"]}
-#SBATCH --ntasks-per-node={config["gpus"]}
+#SBATCH --ntasks={config["tasks"]}
+#SBATCH -m plane={config["gpus"]}
 #SBATCH --cpus-per-task={p.cpus_per_task}
 #SBATCH --mem=0
+#__SBATCH --mem-per-cpu={p.mem_per_cpu}M
 #SBATCH --gres="gpu:{config["gpus"]}"
-#SBATCH --time=2:00:00
+#SBATCH --time=1:00:00
 #SBATCH --exclusive=user
 #SBATCH -p {config["partition"]}
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/{config["partition"]}/sbatch_%j.log
 #SBATCH -J runall_{config["partition"]}_{config["mode"]}
-#SBATCH -x taurusi[2095-2100]
 {"" if config["nodelist"] is None else f"#SBATCH --nodelist {config['nodelist']}"}
 
 ml restore {p.module}
@@ -78,14 +81,24 @@ VENV=$WS_PATH/{p.venvs[config["mode"]]}
 
 source $VENV/bin/activate
 
-export SLURM_TASKS_PER_NODE="{config["gpus"]}(x{config["nodes"]})"
+# export SLURM_TASKS_PER_NODE="{config["gpus"]}(x{config["nodes"]})"
+#
+# mpirun -np {config["tasks"]} \\
+#     -bind-to none -map-by slot \\
+#     -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH -x NCCL_IB_DISABLE=1 {"-x HOROVOD_TIMELINE=$WS_PATH/timeline.data" if config["timeline"] else ""}\\
+#     -mca pml ob1 -mca btl ^openib {p.args.get(config["mode"], "")} \\
+#     $VENV/bin/python -u {config["script_path"]} --data $WS_PATH/data --dist --group {config["group"]} \\
+#     --project {config["partition"]} {"" if config["name"] is None else f"--name {config['name']}"}
 
-mpirun -np {config["tasks"]} \\
-    -bind-to none -map-by slot \\
-    -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH -x PATH -x NCCL_IB_DISABLE=1 {"-x HOROVOD_TIMELINE=$WS_PATH/timeline.data" if config["timeline"] else ""}\\
-    -mca pml ob1 -mca btl ^openib {p.args[config["mode"]]} \\
-    $VENV/bin/python -u {config["script_path"]} --data $WS_PATH/data --dist --group {config["group"]} \\
-    --project {config["partition"]} {"" if config["name"] is None else f"--name {config['name']}"}
+OMPI_MCA_btl='^ofi'
+OMPI_MCA_mtl='^ofi'
+export OMPI_MCA_btl='^ofi'
+export OMPI_MCA_mtl='^ofi'
+export NCCL_DEBUG=INFO
+{p.args.get(config["mode"], "")}
+
+srun --cpu-bind=none --accel-bind=gn $VENV/bin/python -u {config["script_path"]} --data $WS_PATH/data --dist --group {config["group"]} \\
+      --project {config["partition"]} {"" if config["name"] is None else f"--name {config['name']}"}
 """
 
 

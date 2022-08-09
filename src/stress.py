@@ -55,6 +55,7 @@ class StressRunnable(distributed.Runnable):
         self.y_min = y_min
         self.scheduler = scheduler
         self.tprof, self.dlprof = tprof, dlprof
+        self.is_hvd = hvd.is_initialized()
 
     def train_batch(self, X, Y):
         y = self.net(X)
@@ -64,11 +65,18 @@ class StressRunnable(distributed.Runnable):
         self.optimizer.zero_grad()
         loss.backward()
 
-        step_start = time.time()
-        self.optimizer.step()
-        step_time = time.time() - step_start
+        sync_start = time.time()
+        if self.is_hvd:
+            self.optimizer.synchronize()
+        sync_time = time.time() - sync_start
 
-        return (loss.float(), step_time)
+        if self.is_hvd:
+            with self.optimizer.skip_synchronize():
+                self.optimizer.step()
+        else:
+            self.optimizer.step()
+
+        return (loss.float(), sync_time)
 
     def train(self):
         with ExitStack() as stack:
@@ -78,19 +86,19 @@ class StressRunnable(distributed.Runnable):
                 stack.enter_context(torch.autograd.profiler.emit_nvtx())
 
             accuracy = 0
-            sum_step_time = 0
+            sum_sync_time = 0
             for X, Y in self.loader_train:
-                (loss, step_time) = self.train_batch(X.to(self.device), Y.to(self.device))
+                (loss, sync_time) = self.train_batch(X.to(self.device), Y.to(self.device))
                 accuracy += loss
-                sum_step_time += step_time
+                sum_sync_time += sync_time
                 if self.tprof:
                     prof.step()
 
             mean_acc = float(accuracy / len(self.loader_train))
             res = {
                 "acc_train": mean_acc,
-                "time_step": sum_step_time,
-                "time_step_avg": sum_step_time / len(self.loader_train)
+                "time_sync_sum": sum_sync_time,
+                "time_sync": sum_sync_time / len(self.loader_train)
             }
 
             if self.scheduler is not None:
@@ -98,7 +106,7 @@ class StressRunnable(distributed.Runnable):
                 res["sched_lr"] = self.optimizer.param_groups[0]['lr']
 
             if distributed.is_logger():
-                print(f"TRAIN: Acc={mean_acc:.6f}, StepTime={sum_step_time:.6f}")
+                print(f"TRAIN: Acc={mean_acc:.6f}, SyncTimeSum={sum_sync_time:.6f}")
 
             return res
 
@@ -205,7 +213,7 @@ config = {
     # "max_time": 30 * 60,
     # "lr": 4.7331e-04*math.sqrt(10),
     # "batch_size": 75*10,
-    "epochs": 10,
+    "epochs": 20,
     "max_time": None,
     "lr": 4.7331e-04,
     "batch_size": 75,

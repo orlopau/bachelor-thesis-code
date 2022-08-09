@@ -1,0 +1,3 @@
+[submodule "thesis/plots/impact"]
+	path = thesis/plots/impact
+	url = git@github.com:mlco2/impact.git
