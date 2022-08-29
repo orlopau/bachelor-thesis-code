@@ -48,14 +48,15 @@ class StressRunnable(distributed.Runnable):
                  y_min=0,
                  scheduler=None,
                  tprof=False,
-                 dlprof=False) -> None:
+                 dlprof=False,
+                 is_hvd=False) -> None:
         super().__init__(net, optimizer, loader_train, loader_test, device)
         self.loss = nn.MSELoss()
         self.y_max = y_max
         self.y_min = y_min
         self.scheduler = scheduler
         self.tprof, self.dlprof = tprof, dlprof
-        self.is_hvd = hvd.is_initialized()
+        self.is_hvd = is_hvd
 
     def train_batch(self, X, Y):
         y = self.net(X)
@@ -216,7 +217,7 @@ config = {
     "epochs": 20,
     "max_time": None,
     "lr": 4.7331e-04,
-    "batch_size": 75,
+    "batch_size": 1024,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
@@ -315,11 +316,18 @@ if __name__ == "__main__":
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
-            runnable = StressRunnable(model, optimizer, loader_train, loader_test, device, y_max, y_min,
-                                      scheduler)
+            runnable = StressRunnable(model,
+                                      optimizer,
+                                      loader_train,
+                                      loader_test,
+                                      device,
+                                      y_max,
+                                      y_min,
+                                      scheduler,
+                                      is_hvd=True)
 
-            if hvd.rank() == 0:
-                wandb.watch(model, log_freq=100, log="all")
+            # if hvd.rank() == 0:
+            #     wandb.watch(model, log_freq=100, log="all")
 
             runner = distributed.Runner()
             runner.runnable = runnable
@@ -343,17 +351,34 @@ if __name__ == "__main__":
 
                 runner.epoch_hooks.append(p_hook)
 
-            with ExitStack() as stack:
-                if a.scorep:
-                    import scorep
-                    stack.enter_context(scorep.instrumenter.enable())
-                runner.start_training(config["epochs"], hvd.allreduce, config["max_time"])
+            if a.scorep:
+                import scorep
+
+                ctx = None
+
+                def scorep_hook(r):
+                    global ctx
+                    if r["epoch"] == 1:
+                        print("enabling scorep instrumenter")
+                        ctx = scorep.instrumenter.enable()
+                        ctx.__enter__()
+                        print("enabled")
+                    if r["epoch"] == 2:
+                        print("disabling scorep instrumenter")
+                        ctx.__exit__()
+                        print("disabled")
+
+                runner.epoch_hooks.append(scorep_hook)
+
+            runner.start_training(config["epochs"], hvd.allreduce, config["max_time"])
+
         else:
             wandb.init(project=a.project,
                        config={
                            "slurm": distributed.slurm_meta(),
                            "run": config
                        },
+                       group=a.group,
                        name=f"local_run" if a.name is None else a.name,
                        dir="/tmp/s8979104",
                        settings=wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2))
@@ -382,6 +407,26 @@ if __name__ == "__main__":
                 runner.epoch_hooks.append(p_hook)
 
             runner.epoch_hooks.append(lambda p: wandb.log(p))
+
+            if a.scorep:
+                import scorep
+
+                ctx = None
+
+                def scorep_hook(r):
+                    global ctx
+                    if r["epoch"] == 1:
+                        print("enabling scorep instrumenter")
+                        ctx = scorep.instrumenter.enable()
+                        ctx.__enter__()
+                        print("enabled")
+                    if r["epoch"] == 2:
+                        print("disabling scorep instrumenter")
+                        ctx.__exit__()
+                        print("disabled")
+
+                runner.epoch_hooks.append(scorep_hook)
+
             runner.start_training(config["epochs"])
 
         if a.onnx:

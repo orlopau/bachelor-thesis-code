@@ -27,17 +27,12 @@ partitions = {
             2583,
             args={
                 "nccl": "export NCCL_P2P_DISABLE=1",
-                # "mpi": "--mca btl_tcp_if_include ens1f0"
             }),
     "hpdlf":
         _PartitonConfig(
             4,
             3,
-            7916,
-            args={
-                # "nccl": "--mca btl_tcp_if_include ib0,ib1",
-                # "mpi": "--mca btl_tcp_if_include ib0,ib1"
-            }),
+            7916),
     "alpha":
         _PartitonConfig(6,
                         8,
@@ -64,11 +59,11 @@ def gen_sbatch(config):
 #SBATCH --ntasks={config["tasks"]}
 #SBATCH -m plane={config["gpus"]}
 #SBATCH --cpus-per-task={p.cpus_per_task}
-#SBATCH --mem=0
-#__SBATCH --mem-per-cpu={p.mem_per_cpu}M
+#__SBATCH --mem=0
+#SBATCH --mem-per-cpu={p.mem_per_cpu}M
 #SBATCH --gres="gpu:{config["gpus"]}"
 #SBATCH --time=1:00:00
-#SBATCH --exclusive=user
+#__SBATCH --exclusive=user
 #SBATCH -p {config["partition"]}
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/{config["partition"]}/sbatch_%j.log
 #SBATCH -J runall_{config["partition"]}_{config["mode"]}
@@ -97,7 +92,11 @@ export OMPI_MCA_mtl='^ofi'
 export NCCL_DEBUG=INFO
 {p.args.get(config["mode"], "")}
 
-srun --cpu-bind=none --accel-bind=gn $VENV/bin/python -u {config["script_path"]} --data $WS_PATH/data --dist --group {config["group"]} \\
+export SLURM_CPU_BIND_TYPE="threads,none"
+export SLURM_CPU_BIND="verbose,threads,none"
+export SLURM_CPU_BIND_LIST=""
+
+srun --cpu-bind=none,v --accel-bind=gn $VENV/bin/python -u {config["script_path"]} --data $WS_PATH/data --dist --group {config["group"]} \\
       --project {config["partition"]} {"" if config["name"] is None else f"--name {config['name']}"}
 """
 

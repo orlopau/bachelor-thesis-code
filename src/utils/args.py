@@ -10,7 +10,7 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data",
                         help="path to data dir",
-                        default="/home/paul/dev/bachelor-thesis/src/data")
+                        default="/home/paul/dev/bachelor-thesis-code/src/data")
     parser.add_argument("--small", help="specifiy if a small dataset should be used", action="store_true")
     parser.add_argument("--log-dir", help="sub dir under --data for logging results", default="logs")
     parser.add_argument("--no-test",

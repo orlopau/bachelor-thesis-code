@@ -1,5 +1,4 @@
 .idea
-*.ipynb
 __pycache__
 wandb
 src/profiles

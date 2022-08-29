@@ -86,8 +86,10 @@ def reduce_run(run):
     history = run["history"]
     history_metrics = run["history_metrics"]
 
-    mean_metrics = ["time_epoch", "time_train", "time_test", "time_step_avg", "time_step"]
-    min_metrics = ["acc_test", "acc_train"]
+    history = history.rename(columns={"time_step": "time_sync_sum", "time_step_avg": "time_sync"})
+
+    mean_metrics = ["time_sync", "time_sync_sum"]
+    min_metrics = ["acc_test", "acc_train", "time_train", "time_epoch", "time_train", "time_test"]
 
     entry = {
         "epoch":
@@ -100,8 +102,8 @@ def reduce_run(run):
             config["horovod"]["size"] if "horovod" in config else 1,
         "batch_size":
             config["run"]["batch_size"] if "run" in config else config["batch_size"],
-        **history[mean_metrics][2:].add_suffix("_med").mean().to_dict(),
-        **history[min_metrics][2:].add_suffix("_min").min().to_dict()
+        **history[mean_metrics][4:].add_suffix("_mean").median().to_dict(),
+        **history[min_metrics][4:].add_suffix("_min").median().to_dict()
     }
 
     gpu_index = 0
