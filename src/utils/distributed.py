@@ -225,7 +225,7 @@ class DistributedHvdRunner(Runner):
             time_train = time.time() - time_train_start
 
             time_test_start = time.time()
-            data_test = r.test(self.loaders[1], hvd.allreduce)
+            data_test = r.test(self.loaders[1], lambda x: hvd.allreduce(x, name="test_reduce"))
             time_test = time.time() - time_test_start
 
             if hvd.rank() == 0:

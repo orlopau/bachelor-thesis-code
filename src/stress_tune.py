@@ -1,3 +1,4 @@
+import math
 import stress
 from utils import distributed
 from utils import args
@@ -44,14 +45,16 @@ def train(config):
 ss = {
     "run": {
         **stress.config,
-        "batch_size": tune.grid_search(np.geomspace(75, 5000, num=25, dtype=int).tolist()),
+        "batch_size": tune.grid_search(np.arange(75, 5000, 100, dtype=int).tolist()),
+        "lr": tune.sample_from(lambda spec: math.sqrt(spec.config["run"]["batch_size"] / 75) * 4.7331e-04),
+        "epochs": 100,
     },
     "slurm": distributed.slurm_meta(),
     "wandb": {
         "project": args.get_args().project,
         "settings": wandb.Settings(_stats_sample_rate_seconds=0.5, _stats_samples_to_average=2),
         "dir": "/lustre/ssd/ws/s8979104-horovod/data/wandb",
-        "group": "batch_speed_perf",
+        "group": "batch_sqrt",
     },
 }
 
@@ -70,8 +73,11 @@ analysis = tune.run(
     train,
     config=ss,
     resources_per_trial={
-        "cpu": int(distributed.slurm_meta()["SLURM_CPUS_PER_TASK"]) / len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")),
-        "gpu": 1,
+        "cpu":
+            int(distributed.slurm_meta()["SLURM_CPUS_PER_TASK"]) /
+            len(os.environ["CUDA_VISIBLE_DEVICES"].split(",")),
+        "gpu":
+            1,
     },
     num_samples=1,
     # scheduler=ASHAScheduler(max_t=80, grace_period=30),

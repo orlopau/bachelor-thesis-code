@@ -214,10 +214,10 @@ config = {
     # "max_time": 30 * 60,
     # "lr": 4.7331e-04*math.sqrt(10),
     # "batch_size": 75*10,
-    "epochs": 20,
+    "epochs": 100,
     "max_time": None,
     "lr": 4.7331e-04,
-    "batch_size": 1024,
+    "batch_size": 75,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
@@ -279,13 +279,13 @@ if __name__ == "__main__":
             torch.manual_seed(hvd.rank())
             random.seed(hvd.rank())
 
-            print(f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}")
+            print(
+                f"initializing runner on node with hostname {platform.node()}, rank {hvd.rank()}, size {hvd.size()}"
+            )
 
             torch.cuda.set_device(hvd.local_rank())
             device = distributed.get_device_hvd(a.single_gpu)
             print(f"running hvd on rank {hvd.rank()}, device {device}")
-
-            config["lr"] *= math.sqrt(hvd.size())
 
             if hvd.rank() == 0:
                 wandb.init(project=a.project,
@@ -301,9 +301,14 @@ if __name__ == "__main__":
                            settings=wandb.Settings(_stats_sample_rate_seconds=0.5,
                                                    _stats_samples_to_average=2))
 
+            config["lr"] *= math.sqrt(hvd.size())
+            # config["lr"] *= hvd.size()
+
             (model, optimizer, scheduler) = create_model(config)
             model.to(device)
             print("created model...")
+
+
             (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
             (loader_train,
              loader_test) = distributed.create_loaders_hvd(dataset_train, dataset_test, config["batch_size"],
@@ -370,7 +375,8 @@ if __name__ == "__main__":
 
                 runner.epoch_hooks.append(scorep_hook)
 
-            runner.start_training(config["epochs"], hvd.allreduce, config["max_time"])
+            runner.start_training(config["epochs"], lambda x: hvd.allreduce(x, name="test_reduce"),
+                                  config["max_time"])
 
         else:
             wandb.init(project=a.project,

@@ -103,7 +103,8 @@ def reduce_run(run):
         "batch_size":
             config["run"]["batch_size"] if "run" in config else config["batch_size"],
         **history[mean_metrics][4:].add_suffix("_mean").median().to_dict(),
-        **history[min_metrics][4:].add_suffix("_min").median().to_dict()
+        **history[min_metrics][4:].add_suffix("_min").median().to_dict(),
+        **history[min_metrics][4:].add_suffix("_act_min").min().to_dict(),
     }
 
     gpu_index = 0

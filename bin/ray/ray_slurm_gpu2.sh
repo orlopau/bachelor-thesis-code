@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=0
 #SBATCH --gres="gpu:4"
-#SBATCH --time=4:00:00
+#SBATCH --time=12:00:00
 #SBATCH -p gpu2
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/ray/sbatch_%j.log
 
@@ -20,4 +20,4 @@ VENV=$WS_PATH/venv_hvd_mpi
 
 source $VENV/bin/activate
 
-python $WS_PATH/sync/bin/ray/ray_slurm.py "$VENV/bin/python -u $WS_PATH/sync/code/stress_tune.py --data $WS_PATH/data --project gpu2"
+python $WS_PATH/sync/bin/ray/ray_slurm.py "$VENV/bin/python -u $WS_PATH/sync/src/stress_tune.py --data $WS_PATH/data --project gpu2"

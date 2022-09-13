@@ -8,7 +8,7 @@
 #SBATCH --gres="gpu:4"
 #SBATCH --time=1:00:00
 #SBATCH -p gpu2
-#SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch_gpu2.log
+#SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/gpu2/%j.log
 
 ml restore default
 
@@ -27,5 +27,6 @@ export NCCL_DEBUG=INFO
 # export NCCL_IB_DISABLE=1
 export WANDB_MODE=disabled
 export SCOREP_TOTAL_MEMORY=8589934592
+export SCOREP_EXPERIMENT_DIRECTORY=/lustre/ssd/ws/s8979104-horovod/scorep/gpu2_mpi_8_1024/$RANDOM
 
 srun --cpu-bind=none,v --accel-bind=gn $VENV/bin/python -u -m scorep --mpp=mpi --noinstrumenter $WS_PATH/sync/src/stress.py --data $WS_PATH/data --dist --scorep
