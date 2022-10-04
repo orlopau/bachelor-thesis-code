@@ -210,14 +210,15 @@ conf_cnn = {
 }
 
 config = {
-    # "epochs": 999999,
-    # "max_time": 30 * 60,
+    "epochs": 999999,
+    "max_time": 20 * 60,
     # "lr": 4.7331e-04*math.sqrt(10),
     # "batch_size": 75*10,
-    "epochs": 100,
-    "max_time": None,
-    "lr": 4.7331e-04,
-    "batch_size": 75,
+    # "epochs": 100,
+    # "max_time": None,
+    # "lr": 4.7331e-04,
+    "lr": 0.001739051985235059,
+    "batch_size": 1024,
     "optimizer": "adam",
     "model": "cnn",
     "workers": 2,
@@ -288,7 +289,7 @@ if __name__ == "__main__":
             print(f"running hvd on rank {hvd.rank()}, device {device}")
 
             if hvd.rank() == 0:
-                wandb.init(project=a.project,
+                wandb.init(project="alpha",
                            config={
                                "horovod": distributed.horovod_meta(),
                                "slurm": distributed.slurm_meta(),
@@ -301,13 +302,12 @@ if __name__ == "__main__":
                            settings=wandb.Settings(_stats_sample_rate_seconds=0.5,
                                                    _stats_samples_to_average=2))
 
-            config["lr"] *= math.sqrt(hvd.size())
-            # config["lr"] *= hvd.size()
+            # config["lr"] *= math.sqrt(hvd.size())
+            config["lr"] *= hvd.size()
 
             (model, optimizer, scheduler) = create_model(config)
             model.to(device)
             print("created model...")
-
 
             (dataset_train, dataset_test, y_max, y_min) = create_datasets(a.data)
             (loader_train,
@@ -321,6 +321,7 @@ if __name__ == "__main__":
             hvd.broadcast_optimizer_state(optimizer, root_rank=0)
             hvd.broadcast_parameters(model.state_dict(), root_rank=0)
 
+            scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1 / 4, total_iters=10)
             runnable = StressRunnable(model,
                                       optimizer,
                                       loader_train,
@@ -328,8 +329,8 @@ if __name__ == "__main__":
                                       device,
                                       y_max,
                                       y_min,
-                                      scheduler,
-                                      is_hvd=True)
+                                      is_hvd=True,
+                                      scheduler=scheduler)
 
             # if hvd.rank() == 0:
             #     wandb.watch(model, log_freq=100, log="all")

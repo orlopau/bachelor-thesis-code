@@ -62,7 +62,7 @@ def gen_sbatch(config):
 #__SBATCH --mem=0
 #SBATCH --mem-per-cpu={p.mem_per_cpu}M
 #SBATCH --gres="gpu:{config["gpus"]}"
-#SBATCH --time=2:00:00
+#SBATCH --time=0:40:00
 #__SBATCH --exclusive=user
 #SBATCH -p {config["partition"]}
 #SBATCH -o /lustre/ssd/ws/s8979104-horovod/sbatch/{config["partition"]}/sbatch_%j.log

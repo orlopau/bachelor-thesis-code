@@ -13,7 +13,7 @@ Code to generate the plots from data is also included.
 ## References
 
 [1] Matthias Zscheyge, Robert Böhm, Andreas Hornig, Johannes Gerritzen, and Maik
-    Gude. Rate dependent non-linear mechanical behaviour of continuous
+    Gude. Rate-dependent non-linear mechanical behaviour of continuous
     fibre-reinforced thermoplastic composites – experimental characterisation
     and viscoelastic-plastic damage modelling. Materials & Design, 193:108827,
     2020
